@@ -1,0 +1,159 @@
+RULE putInternalEntry
+CLASS org.infinispan.CacheImpl
+METHOD putInternal
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT ENTRY
+IF TRUE
+DO
+  createManagedContext();
+#  flowTag("PUT" + $key);
+  flowTag("PUT");
+ENDRULE
+
+RULE putInternalExit
+CLASS org.infinispan.CacheImpl
+METHOD putInternal
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT EXIT
+IF TRUE
+DO
+  checkpoint("PUT_exit");
+  destroyManagedContext();
+ENDRULE
+
+RULE removeInternalEntry
+CLASS org.infinispan.CacheImpl
+METHOD removeInternal
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT ENTRY
+IF TRUE
+DO
+  createManagedContext();
+  flowTag("REMOVE");
+ENDRULE
+
+RULE removeInternalExit
+CLASS org.infinispan.CacheImpl
+METHOD removeInternal
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT ENTRY
+IF TRUE
+DO
+  checkpoint("REMOVE_exit");
+  destroyManagedContext();
+ENDRULE
+
+RULE getEntry
+CLASS org.infinispan.CacheImpl
+METHOD get(java.lang.Object)
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT ENTRY
+IF TRUE
+DO
+  createManagedContext();
+  flowTag("GET");
+ENDRULE
+
+RULE getExit
+CLASS org.infinispan.CacheImpl
+METHOD get(java.lang.Object)
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT EXIT
+IF TRUE
+DO
+  checkpoint("GET_exit");
+  destroyManagedContext();
+ENDRULE
+
+RULE lock
+CLASS org.infinispan.util.concurrent.locks.LockManagerImpl
+METHOD lockAndRecord
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT ENTRY
+IF TRUE
+DO
+  checkpoint("LOCK");
+ENDRULE
+
+RULE lockOk
+CLASS org.infinispan.util.concurrent.locks.LockManagerImpl
+METHOD lockAndRecord
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT EXIT
+IF $!
+DO
+  checkpoint("LOCK_OK");
+ENDRULE
+
+RULE lockFail
+CLASS org.infinispan.util.concurrent.locks.LockManagerImpl
+METHOD lockAndRecord
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT EXIT
+IF !($!)
+DO
+  checkpoint("LOCK_FAIL");
+ENDRULE
+
+RULE unlock
+CLASS org.infinispan.util.concurrent.locks.LockManagerImpl
+METHOD unlock
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT EXIT
+IF TRUE
+DO
+  checkpoint("UNLOCK");
+ENDRULE
+
+RULE unlockAll
+CLASS org.infinispan.util.concurrent.locks.LockManagerImpl
+METHOD unlockAll
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT ENTRY
+IF TRUE
+DO
+#  checkpoint("UNLOCK_ALL" + $1.getLockedKeys());
+  checkpoint("UNLOCK_ALL");
+ENDRULE
+
+RULE submitCallable
+INTERFACE java.util.concurrent.AbstractExecutorService
+METHOD submit(java.util.concurrent.Callable)
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT ENTRY
+IF hasContextData()
+DO
+  associateData($1);
+  threadHandoverStarted($1);
+ENDRULE
+
+RULE executeCallableEntry
+INTERFACE ^java.util.concurrent.Callable
+METHOD run
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT ENTRY
+IF TRUE
+DO
+  threadHandoverSuccess($0);
+  checkpoint("Callable");
+ENDRULE
+
+RULE executeCallableExit
+INTERFACE ^java.util.concurrent.Callable
+METHOD run
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT EXIT
+IF TRUE
+DO
+  threadProcessingComplete();
+ENDRULE
+
+RULE commandPerform
+INTERFACE ^org.infinispan.commands.ReplicableCommand
+METHOD perform
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT ENTRY
+IF TRUE
+DO
+  msgTagWithClass($0);
+ENDRULE

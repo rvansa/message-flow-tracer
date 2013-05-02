@@ -1,0 +1,288 @@
+RULE incomingData
+CLASS org.jgroups.protocols.UDP$PacketReceiver
+METHOD run
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT LINE 677
+IF TRUE
+DO
+  incomingData();
+ENDRULE
+
+RULE dispatchData
+CLASS org.jgroups.protocols.TP
+METHOD dispatchToThreadPool
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT LINE 1310
+IF TRUE
+DO
+  setContextData($tmp);
+  threadHandoverStarted($tmp);
+ENDRULE
+
+RULE dataDispatched
+CLASS org.jgroups.protocols.TP
+METHOD receive
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT EXIT
+IF TRUE
+DO
+  threadProcessingComplete();
+ENDRULE
+
+RULE dataProcessing
+CLASS org.jgroups.protocols.TP$IncomingPacket
+METHOD run
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT ENTRY
+IF TRUE
+DO
+  threadHandoverSuccess($0.buf);
+ENDRULE
+
+
+RULE messageHandlingStarted
+CLASS org.jgroups.protocols.TP$IncomingPacket
+METHOD handleMyMessage
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT ENTRY
+IF TRUE
+DO
+  messageHandlingStarted(org.jboss.qa.jdg.messageflow.MessageUnmarshaller.getMessageIdentifier($1));
+ENDRULE
+
+RULE messageHandlingFinished
+CLASS org.jgroups.protocols.TP$IncomingPacket
+METHOD handleMyMessage
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT EXIT
+IF TRUE
+DO
+  messageHandlingFinished();
+ENDRULE
+
+RULE dataProcessed
+CLASS org.jgroups.protocols.TP$IncomingPacket
+METHOD run
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT EXIT
+IF TRUE
+DO
+  threadProcessingComplete();
+ENDRULE
+
+RULE loopbackCopyDispatched
+CLASS org.jgroups.protocols.TP
+METHOD down
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT LINE 1178
+IF hasContextData()
+DO
+  associateData($copy);
+  threadHandoverStarted($copy);
+ENDRULE
+
+RULE loopbackCopyDispatchedUnknownSource
+CLASS org.jgroups.protocols.TP
+METHOD down
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT LINE 1178
+IF !hasContextData()
+DO
+  threadHandoverStarted($copy);
+ENDRULE
+
+
+RULE loopbackCopyProcessing
+CLASS org.jgroups.protocols.TP$4
+METHOD run
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT LINE 1181
+IF TRUE
+DO
+  threadHandoverSuccess($0.val$copy);
+ENDRULE
+
+RULE loopbackCopyComplete
+CLASS org.jgroups.protocols.TP$4
+METHOD run
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT EXIT
+IF TRUE
+DO
+  threadProcessingComplete();
+ENDRULE
+
+RULE messageRejectedTPE
+CLASS ^java.util.concurrent.ThreadPoolExecutor
+METHOD reject
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT ENTRY
+IF hasContextData()
+DO
+  discardMessages(org.jboss.qa.jdg.messageflow.MessageUnmarshaller.getDataIdentifiers($1));
+  threadHandoverFailure();
+ENDRULE
+
+RULE unicastNonCausal
+CLASS org.jgroups.protocols.UNICAST2
+METHOD up
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT LINE 417
+IF $hdr.type != 0
+DO
+  setNonCausal();
+  msgTag("UNICAST2");
+ENDRULE
+
+RULE mcastRetransmit
+CLASS org.jgroups.protocols.pbcast.NAKACK2
+METHOD up
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT LINE 578
+IF TRUE
+DO
+  setNonCausal();
+ENDRULE
+
+RULE sendMessageStart
+CLASS org.jgroups.protocols.TP
+METHOD send
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT ENTRY
+IF TRUE
+DO
+  outcomingStarted(org.jboss.qa.jdg.messageflow.MessageUnmarshaller.getMessageIdentifier($1));
+ENDRULE
+
+RULE checkUseBundler
+CLASS org.jgroups.protocols.TP
+METHOD send
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT LINE 1326
+IF TRUE
+DO
+  checkpoint("Using bundler");
+ENDRULE
+
+RULE sendMessageEnd
+CLASS org.jgroups.protocols.TP
+METHOD send
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT EXIT
+IF TRUE
+DO
+  outcomingFinished();
+ENDRULE
+
+# tags for various message types
+
+RULE MarkRequest
+CLASS org.jgroups.blocks.Request
+METHOD execute
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT ENTRY
+IF TRUE
+DO
+  setMarkFromLastMsgTag($0.completed);
+ENDRULE
+
+RULE ResponseReceived
+CLASS org.jgroups.blocks.Request
+METHOD receiveResponse
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT ENTRY
+IF TRUE
+DO
+  msgTag("RSP_" + getMark($0.completed));
+ENDRULE
+
+RULE RequestFinalized
+CLASS org.jgroups.blocks.Request
+METHOD finalize
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT ENTRY
+IF TRUE
+DO
+  removeMark($0.completed);
+ENDRULE
+
+
+RULE Discovery
+CLASS org.jgroups.protocols.Discovery
+METHOD up
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT LINE 361
+IF TRUE
+DO
+  msgTag("Discovery");
+ENDRULE
+
+RULE FD_SOCK
+CLASS org.jgroups.protocols.FD_SOCK
+METHOD up
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT LINE 206
+IF TRUE
+DO
+  msgTag("FD");
+ENDRULE
+
+RULE FD_ALL
+CLASS org.jgroups.protocols.FD_ALL
+METHOD up
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT LINE 174
+IF TRUE
+DO
+  msgTag("FD");
+ENDRULE
+
+RULE VERIFY_SUSPECT
+CLASS org.jgroups.protocols.VERIFY_SUSPECT
+METHOD up
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT LINE 111
+IF TRUE
+DO
+  msgTag("VERIFY");
+ENDRULE
+
+RULE FlowControl_Request
+CLASS org.jgroups.protocols.FlowControl
+METHOD up
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT LINE 379
+IF TRUE
+DO
+  msgTag("FC_Request");
+ENDRULE
+
+RULE FlowControl_Replenish
+CLASS org.jgroups.protocols.FlowControl
+METHOD up
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT LINE 375
+IF TRUE
+DO
+  msgTag("FC_Replenish");
+ENDRULE
+
+RULE RSVP_ReqOnly
+CLASS org.jgroups.protocols.RSVP
+METHOD up
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT LINE 176
+IF TRUE
+DO
+  msgTag("RSVP_ReqOnly");
+ENDRULE
+
+RULE RSVP_Resp
+CLASS org.jgroups.protocols.RSVP
+METHOD up
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT LINE 179
+IF TRUE
+DO
+  msgTag("RSVP_Resp");
+ENDRULE
