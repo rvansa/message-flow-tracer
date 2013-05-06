@@ -27,7 +27,9 @@ import java.io.File;
 import java.io.FileReader;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.LinkedBlockingQueue;
@@ -35,7 +37,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLongArray;
 
 /**
- * Merges multiple ControlFlows from several nodes into MessageFlows.
+ * Merges multiple spans from several nodes into trace
  *
  * @author Radim Vansa &lt;rvansa@redhat.com&gt;
  */
@@ -43,18 +45,18 @@ public class Composer {
    private static final long MAX_ADVANCE_MILIS = 10000;
 
    // this map is populated in first pass and should contain the number of references to each message
-   // in second pass it is only read and when the counter reaches zero for all messages in the message flow
-   // the message flow is ready to be written to file
+   // in second pass it is only read and when the counter reaches zero for all messages in the trace
+   // the trace is ready to be written to file
    private ConcurrentMap<String, AtomicInteger> messageReferences = new ConcurrentHashMap<String, AtomicInteger>();
 
-   private ConcurrentMap<String, MessageFlow> messageFlows = new ConcurrentHashMap<String, MessageFlow>();
+   private ConcurrentMap<String, Trace> traces = new ConcurrentHashMap<String, Trace>();
 
-   private LinkedBlockingQueue<MessageFlow> finishedFlows = new LinkedBlockingQueue<MessageFlow>(1000);
+   private LinkedBlockingQueue<Trace> finishedTraces = new LinkedBlockingQueue<Trace>(1000);
    private AtomicLongArray highestUnixTimestamps;
 
    private List<String> inputFiles = new ArrayList<String>();
-   private String outputFile;
-   private Class<? extends Processor> processorClass = PrintMessageFlow.class;
+   private String traceLogFile;
+   private Set<Class<? extends Processor>> processorClasses = new HashSet<Class<? extends Processor>>();
    private boolean reportMemoryUsage = false;
    private int totalMessages;
 
@@ -66,23 +68,29 @@ public class Composer {
       Composer composer = new Composer();
       int i;
       for (i = 0; i < args.length; ++i) {
-         if (args[i].equals("-p")) {
+         if (args[i].equals("-o")) {
             if (i + 1 >= args.length) {
                printUsage();
                return;
             } else {
-               composer.setOutputFile(args[i + 1]);
-               composer.setProcessorClass(PrintMessageFlow.class);
+               composer.setTraceLogFile(args[i + 1]);
                ++i;
             }
          } else if (args[i].equals("-r")) {
             composer.setReportMemoryUsage(true);
+         } else if (args[i].equals("-p")) {
+            composer.processorClasses.add(PrintTrace.class);
          } else if (args[i].equals("-m")) {
-            composer.setProcessorClass(AnalyzeMessages.class);
+            composer.processorClasses.add(AnalyseMessages.class);
          } else if (args[i].equals("-l")) {
-            composer.setProcessorClass(AnalyzeLocks.class);
-         } else if (args[i].equals("-f")) {
-            composer.setProcessorClass(AnalyzeFlows.class);
+            composer.processorClasses.add(AnalyseLocks.class);
+         } else if (args[i].equals("-t")) {
+            composer.processorClasses.add(AnalyseTraces.class);
+         } else if (args[i].equals("-a")) {
+            composer.processorClasses.add(PrintTrace.class);
+            composer.processorClasses.add(AnalyseMessages.class);
+            composer.processorClasses.add(AnalyseLocks.class);
+            composer.processorClasses.add(AnalyseTraces.class);
          } else if (args[i].startsWith("-")) {
             System.err.println("Unknown option " + args[i]);
             printUsage();
@@ -91,18 +99,24 @@ public class Composer {
             break;
          }
       }
+      if (composer.processorClasses.isEmpty()) {
+         composer.processorClasses.add(PrintTrace.class);
+      }
       for (; i < args.length; ++i) {
-         composer.addInput(args[i]);
+         composer.inputFiles.add(args[i]);
       }
       composer.run();
    }
 
-   private void addInput(String file) {
-      inputFiles.add(file);
-   }
-
    private static void printUsage() {
-      System.err.println("Usage [-o outputfile] inputfiles...");
+      System.err.println("Usage  [-r] [-p|-m|-l|-t|-a] [-o trace_log] span_logs...");
+      System.err.println("\t-r\tReport memory usage");
+      System.err.println("\t-p\tPrint log of traces");
+      System.err.println("\t-m\tAnalyze messages");
+      System.err.println("\t-l\tAnalyze locks");
+      System.err.println("\t-t\tAnalyze traces");
+      System.err.println("\t-a\tPrints log of traces and runs all available analyses");
+      System.err.println("\t-o\tTrace log output file");
    }
 
    public void run() {
@@ -128,20 +142,24 @@ public class Composer {
          threads[i] = t;
          t.start();
       }
-      ProcessorThread processorThread = new ProcessorThread(getProcessor());
+      List<Processor> processors = new ArrayList(processorClasses.size());
+      for (Class<? extends Processor> clazz : processorClasses) {
+         processors.add(getProcessor(clazz));
+      }
+      ProcessorThread processorThread = new ProcessorThread(processors);
       processorThread.start();
       joinAll(threads);
       processorThread.finish();
-      while (!finishedFlows.isEmpty()) {
+      while (!finishedTraces.isEmpty()) {
          Thread.yield();
       }
-      System.err.printf("Memory:\n\tmessage references: %d\n\tmessage flows: %d\n",
-                        messageReferences.size(), messageFlows.size());
+      System.err.printf("Memory:\n\tmessage references: %d\n\ttraces: %d\n",
+                        messageReferences.size(), traces.size());
    }
 
-   private Processor getProcessor() {
+   private Processor getProcessor(Class<? extends Processor> clazz) {
       try {
-         Processor processor = processorClass.newInstance();
+         Processor processor = clazz.newInstance();
          processor.init(this);
          return processor;
       } catch (Exception e) {
@@ -170,18 +188,14 @@ public class Composer {
       System.err.printf("Using %d/%d MB of memory\n", used, max);
    }
 
-   public void setOutputFile(String outputFile) {
-      if (!outputFile.equals("-")) {
-         this.outputFile = outputFile;
+   public void setTraceLogFile(String traceLogFile) {
+      if (!traceLogFile.equals("-")) {
+         this.traceLogFile = traceLogFile;
       }
    }
 
-   public void setProcessorClass(Class<? extends Processor> processorClass) {
-      this.processorClass = processorClass;
-   }
-
-   public String getOutputFile() {
-      return outputFile;
+   public String getTraceLogFile() {
+      return traceLogFile;
    }
 
    public void setReportMemoryUsage(boolean reportMemoryUsage) {
@@ -208,15 +222,13 @@ public class Composer {
       }
 
       private void read() throws IOException {
-         String source = new File(file).getName();
-         source = source.substring(0, source.lastIndexOf('.') < 0 ? source.length() : source.lastIndexOf('.'));
          BufferedReader reader = new BufferedReader(new FileReader(file));
 
-         String line = reader.readLine(); // timestamp info
+         String line = reader.readLine(); // timestamp info - ignored
          while ((line = reader.readLine()) != null) {
-            if (line.startsWith(MessageFlow.CONTROL_FLOW) || line.startsWith(MessageFlow.NON_CAUSAL)) {
+            if (line.startsWith(Trace.SPAN) || line.startsWith(Trace.NON_CAUSAL)) {
                String[] parts = line.split(";");
-               for (int i = line.startsWith(MessageFlow.NON_CAUSAL) ? 2 : 1; i < parts.length; ++i) {
+               for (int i = line.startsWith(Trace.NON_CAUSAL) ? 2 : 1; i < parts.length; ++i) {
                   if (parts[i].equals("null")) continue;
                   AtomicInteger prev = messageReferences.putIfAbsent(parts[i], new AtomicInteger(1));
                   if (prev != null) {
@@ -268,51 +280,51 @@ public class Composer {
          long nanoTime = Long.parseLong(nanoAndUnix[0]);
          long unixTime = Long.parseLong(nanoAndUnix[1]);
 
-         MessageFlow mf = null;
+         Trace trace = null;
          long localHighestUnixTimestamp = 0;
          int lineNumber = 1;
-         int controlFlowCounter = 0;
+         int spanCounter = 0;
          String line;
          while ((line = reader.readLine()) != null) {
             try {
                lineNumber++;
                String[] parts = line.split(";");
-               if (line.startsWith(MessageFlow.CONTROL_FLOW)) {
-                  tryRetire(mf);
-                  mf = null;
+               if (line.startsWith(Trace.SPAN)) {
+                  tryRetire(trace);
+                  trace = null;
                   checkAdvance(localHighestUnixTimestamp);
-                  controlFlowCounter++;
+                  spanCounter++;
                   for (int i = 1; i < parts.length; ++i) {
                      String message = parts[i];
                      if (message.equals("null")) continue;
-                     if (mf == null) {
-                        mf = retrieveMessageFlowFor(message);
+                     if (trace == null) {
+                        trace = retrieveTraceFor(message);
                      } else {
-                        MessageFlow mfForThisMessage = messageFlows.get(message);
-                        if (mf == mfForThisMessage) {
-                           //System.err.println("Message should not be twice in one flow on one machine! (" + message + ", " + source + ":" + lineNumber + ")");
-                        } else if (mfForThisMessage == null) {
-                           mf.addMessage(message);
-                           mfForThisMessage = messageFlows.putIfAbsent(message, mf);
-                           if (mfForThisMessage != null) {
-                              mf = mergeFlows(mf, message, mfForThisMessage);
+                        Trace traceForThisMessage = traces.get(message);
+                        if (trace == traceForThisMessage) {
+                           //System.err.println("Message should not be twice in one trace on one machine! (" + message + ", " + source + ":" + lineNumber + ")");
+                        } else if (traceForThisMessage == null) {
+                           trace.addMessage(message);
+                           traceForThisMessage = traces.putIfAbsent(message, trace);
+                           if (traceForThisMessage != null) {
+                              trace = mergeTraces(trace, message, traceForThisMessage);
                            }
                         } else {
-                           mf = mergeFlows(mf, message, mfForThisMessage);
+                           trace = mergeTraces(trace, message, traceForThisMessage);
                         }
                      }
                      decrementMessageRefCount(message);
                   }
-                  if (mf == null) {
+                  if (trace == null) {
                      // no message associated, but tracked?
-                     mf = new MessageFlow();
-                     mf.lock.lock();
+                     trace = new Trace();
+                     trace.lock.lock();
                   }
-               } else if (line.startsWith(MessageFlow.NON_CAUSAL)) {
-                  tryRetire(mf);
-                  mf = null;
+               } else if (line.startsWith(Trace.NON_CAUSAL)) {
+                  tryRetire(trace);
+                  trace = null;
                   checkAdvance(localHighestUnixTimestamp);
-               } else if (line.startsWith(MessageFlow.EVENT)) {
+               } else if (line.startsWith(Trace.EVENT)) {
                   if (parts.length < 4 || parts.length > 5) {
                      System.err.println("Invalid line " + lineNumber + "\n" + line);
                      continue;
@@ -323,20 +335,20 @@ public class Composer {
                   String type = parts[3];
                   String text = parts.length > 4 ? parts[4].trim() : null;
 
-                  if (mf != null) {
-                     Event e = new Event(nanoTime, unixTime, eventTime, source, controlFlowCounter, threadName, type, text);
-                     mf.addEvent(e);
+                  if (trace != null) {
+                     Event e = new Event(nanoTime, unixTime, eventTime, source, spanCounter, threadName, type, text);
+                     trace.addEvent(e);
                      localHighestUnixTimestamp = Math.max(localHighestUnixTimestamp, e.timestamp.getTime());
                   } else {
                      // NON-DATA
                      if (type.equals(Event.Type.OUTCOMING_DATA_STARTED.toString())) {
-                        MessageFlow mfForThisMessage = retrieveMessageFlowFor(parts[4].trim());
-                        Event e = new Event(nanoTime, unixTime, eventTime, source, controlFlowCounter,
+                        Trace traceForThisMessage = retrieveTraceFor(parts[4].trim());
+                        Event e = new Event(nanoTime, unixTime, eventTime, source, spanCounter,
                                             threadName, Event.Type.RETRANSMISSION.toString(), text);
-                        mfForThisMessage.addEvent(e);
+                        traceForThisMessage.addEvent(e);
 
                         decrementMessageRefCount(text);
-                        tryRetire(mfForThisMessage);
+                        tryRetire(traceForThisMessage);
                         checkAdvance(e.timestamp.getTime());
                      }
                   }
@@ -348,7 +360,7 @@ public class Composer {
                throw e;
             }
          }
-         tryRetire(mf);
+         tryRetire(trace);
       }
 
       private void checkAdvance(long eventUnixTimestamp) {
@@ -372,70 +384,70 @@ public class Composer {
          }
       }
 
-      private MessageFlow mergeFlows(MessageFlow mf, String message, MessageFlow mfForThisMessage) {
-         // hopefully even if we merge the flows twice the result is still correct
+      private Trace mergeTraces(Trace trace, String message, Trace traceForThisMessage) {
+         // hopefully even if we merge the traces twice the result is still correct
          for (;;) {
-            if (mfForThisMessage.lock.tryLock()) {
-               // check if we have really the right messageFlow
-               MessageFlow possiblyOtherMF = messageFlows.get(message);
-               if (possiblyOtherMF != mfForThisMessage) {
-                  mfForThisMessage.lock.unlock();
-                  if (possiblyOtherMF == mf || possiblyOtherMF == null) {
-                     // nobody can manipulate with current mf and the mf cannot be retired either
-                     mf.lock.unlock();
+            if (traceForThisMessage.lock.tryLock()) {
+               // check if we have really the right trace
+               Trace possiblyOtherTrace = traces.get(message);
+               if (possiblyOtherTrace != traceForThisMessage) {
+                  traceForThisMessage.lock.unlock();
+                  if (possiblyOtherTrace == trace || possiblyOtherTrace == null) {
+                     // nobody can manipulate with current trace and the trace cannot be retired either
+                     trace.lock.unlock();
                      throw new IllegalStateException();
                   }
-                  mfForThisMessage = possiblyOtherMF;
+                  traceForThisMessage = possiblyOtherTrace;
                } else {
-                  for (String msg : mfForThisMessage.messages) {
-                     messageFlows.put(msg, mf);
-                     mf.addMessage(msg);
+                  for (String msg : traceForThisMessage.messages) {
+                     traces.put(msg, trace);
+                     trace.addMessage(msg);
                   }
-                  for (Event e : mfForThisMessage.events) {
-                     mf.addEvent(e);
+                  for (Event e : traceForThisMessage.events) {
+                     trace.addEvent(e);
                   }
 
-                  if (mfForThisMessage.mergedInto != null) {
+                  if (traceForThisMessage.mergedInto != null) {
                      throw new IllegalStateException();
                   }
-                  mfForThisMessage.mergedInto = mf;
-                  mf.mergeCounter += mfForThisMessage.mergeCounter;
-                  mfForThisMessage.lock.unlock();
+                  traceForThisMessage.mergedInto = trace;
+                  trace.mergeCounter += traceForThisMessage.mergeCounter;
+                  traceForThisMessage.lock.unlock();
                   break;
                }
             } else {
-               mf.mergeCounter++;
-               mf.lock.unlock();
+               trace.mergeCounter++;
+               trace.lock.unlock();
                Thread.yield();
-               mf.lock.lock();
-               mf.mergeCounter--;
-               while (mf.mergedInto != null) {
-                  MessageFlow old = mf;
-                  mf = mf.mergedInto;
+               trace.lock.lock();
+               trace.mergeCounter--;
+               while (trace.mergedInto != null) {
+                  Trace old = trace;
+                  trace = trace.mergedInto;
                   old.lock.unlock();
-                  mf.lock.lock();
-                  mf.mergeCounter--;
+                  trace.lock.lock();
+                  trace.mergeCounter--;
                }
             }
          }
-         return mf;
+         return trace;
       }
 
-      private MessageFlow retrieveMessageFlowFor(String message) {
-         MessageFlow mf = messageFlows.get(message);
+      private Trace retrieveTraceFor(String message) {
+         Trace mf = traces.get(message);
          if (mf == null) {
-            mf = new MessageFlow();
+            mf = new Trace();
             mf.addMessage(message);
-            MessageFlow prev = messageFlows.putIfAbsent(message, mf);
+            Trace prev = traces.putIfAbsent(message, mf);
             if (prev != null) {
                mf = prev;
             }
          }
          for (;;) {
             mf.lock.lock();
-            MessageFlow mfFromMap = messageFlows.get(message);
+            Trace mfFromMap = traces.get(message);
             if (mfFromMap == null) {
-               // removal from the map happens only when the flow is retired, therefore, no more
+               // removal from the map happens only when the trace is retired, therefore, no more
                // references for the message are alive
                mf.lock.unlock();
                throw new IllegalStateException();
@@ -450,7 +462,7 @@ public class Composer {
          return mf;
       }
 
-      private void tryRetire(MessageFlow mf) {
+      private void tryRetire(Trace mf) {
          if (mf == null) return;
          try {
             if (mf.mergeCounter > 0) return;
@@ -460,10 +472,10 @@ public class Composer {
                }
             }
             for (String message : mf.messages) {
-               messageFlows.remove(message);
+               traces.remove(message);
             }
             mf.retired = true;
-            finishedFlows.put(mf);
+            finishedTraces.put(mf);
          } catch (InterruptedException e) {
             System.err.println("Interrupted when adding to queue!");
          } finally {
@@ -481,39 +493,43 @@ public class Composer {
    }
 
    private class ProcessorThread extends Thread {
-      private int flowsProcessed;
+      private int tracesProcessed;
       private volatile boolean finished = false;
-      private final Processor interpret;
+      private final List<Processor> processors;
 
-      private ProcessorThread(Processor interpret) {
-         setName("MessageFlowProcessor");
-         this.interpret = interpret;
+      private ProcessorThread(List<Processor> processors) {
+         setName("TraceProcessor");
+         this.processors = processors;
       }
 
       @Override
       public void run() {
-         while (!finished || !finishedFlows.isEmpty()) {
-            MessageFlow mf = null;
+         while (!finished || !finishedTraces.isEmpty()) {
+            Trace trace = null;
             try {
-               while (!finished && finishedFlows.isEmpty()) {
+               while (!finished && finishedTraces.isEmpty()) {
                   Thread.yield();
                }
-               if (finishedFlows.isEmpty()) break;
-               mf = finishedFlows.take();
+               if (finishedTraces.isEmpty()) break;
+               trace = finishedTraces.take();
             } catch (InterruptedException e) {
                System.err.println("Printer interrupted!");
                break;
             }
-            interpret.process(mf);
-            if (++flowsProcessed % 10000 == 0) {
-               System.err.printf("Processed %d message flows, %d/%d messages\n",
-                                 flowsProcessed, totalMessages - messageReferences.size(), totalMessages);
+            for (Processor processor : processors) {
+               processor.process(trace);
+            }
+            if (++tracesProcessed % 10000 == 0) {
+               System.err.printf("Processed %d traces, %d/%d messages\n",
+                                 tracesProcessed, totalMessages - messageReferences.size(), totalMessages);
                if (reportMemoryUsage) {
                   Composer.reportMemoryUsage();
                }
             }
          }
-         interpret.finish();
+         for (Processor processor : processors) {
+            processor.finish();
+         }
          System.err.println("Processing finished");
       }
 

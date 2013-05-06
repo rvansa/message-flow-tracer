@@ -6,8 +6,8 @@ AT ENTRY
 IF TRUE
 DO
   createManagedContext();
-#  flowTag("PUT" + $key);
-  flowTag("PUT");
+#  traceTag("PUT" + $key);
+  traceTag("PUT");
 ENDRULE
 
 RULE putInternalExit
@@ -29,7 +29,7 @@ AT ENTRY
 IF TRUE
 DO
   createManagedContext();
-  flowTag("REMOVE");
+  traceTag("REMOVE");
 ENDRULE
 
 RULE removeInternalExit
@@ -51,7 +51,7 @@ AT ENTRY
 IF TRUE
 DO
   createManagedContext();
-  flowTag("GET");
+  traceTag("GET");
 ENDRULE
 
 RULE getExit

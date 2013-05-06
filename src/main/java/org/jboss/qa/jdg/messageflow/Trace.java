@@ -22,24 +22,42 @@
 
 package org.jboss.qa.jdg.messageflow;
 
+import java.util.HashSet;
+import java.util.Set;
+import java.util.SortedSet;
+import java.util.TreeSet;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
+
 /**
- * // TODO: Document this
- *
- * @author Radim Vansa &lt;rvansa@redhat.com&gt;
- */
-public class AnalyzeLocks implements Processor {
-   @Override
-   public void init(Composer composer) {
-      // TODO: Customise this generated block
+* @author Radim Vansa &lt;rvansa@redhat.com&gt;
+*/
+class Trace implements Comparable<Trace> {
+   static final String NON_CAUSAL = "NC";
+   static final String SPAN = "SPAN";
+   static final String EVENT = "E";
+
+   public SortedSet<Event> events = new TreeSet<Event>();
+   public Set<String> messages = new HashSet<String>();
+   public volatile boolean retired = false;
+   public int mergeCounter = 0;
+   public Trace mergedInto = null;
+
+   // this lock both against internal manipulation AND removing/replacing in messageFlows
+   public Lock lock = new ReentrantLock();
+
+   public void addMessage(String msg) {
+      if (retired) throw new IllegalStateException();
+      messages.add(msg);
+   }
+
+   public void addEvent(Event e) {
+      if (retired) throw new IllegalStateException();
+      events.add(e);
    }
 
    @Override
-   public void process(MessageFlow mf) {
-      // TODO: Customise this generated block
-   }
-
-   @Override
-   public void finish() {
-      // TODO: Customise this generated block
+   public int compareTo(Trace o) {
+      return events.first().compareTo(o.events.first());
    }
 }

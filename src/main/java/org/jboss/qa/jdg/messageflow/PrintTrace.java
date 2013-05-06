@@ -37,14 +37,15 @@ import java.util.TreeSet;
 /**
 * @author Radim Vansa &lt;rvansa@redhat.com&gt;
 */
-class PrintMessageFlow implements Processor {
+class PrintTrace implements Processor {
    private SimpleDateFormat format = new SimpleDateFormat("HH:mm:ss.SSS");
    private PrintStream out = System.out;
    private long outLine = 0;
+   private int traceCounter = 0;
 
    @Override
    public void init(Composer composer) {
-      String outputFile = composer.getOutputFile();
+      String outputFile = composer.getTraceLogFile();
       if (outputFile != null) {
          try {
             out = new PrintStream(new BufferedOutputStream(new FileOutputStream(outputFile)));
@@ -61,17 +62,17 @@ class PrintMessageFlow implements Processor {
       }
    }
 
-   public void process(MessageFlow mf) {
+   public void process(Trace trace) {
       outLine++;
-      if (mf.events.size() > 100) {
-         System.err.printf("Long message flow (%d events, %d messages) on line %d\n",
-                           mf.events.size(), mf.messages.size(), outLine);
+      if (trace.events.size() > 100) {
+         System.err.printf("Long trace %d (%d events, %d messages) on line %d\n",
+                           traceCounter, trace.events.size(), trace.messages.size(), outLine);
       }
-      out.printf("MF %d msg\n", mf.messages.size());
-      for (String message : mf.messages) {
+      out.printf("TRACE %d: %d msg\n", traceCounter++, trace.messages.size());
+      for (String message : trace.messages) {
          String src = null;
          ArrayList<String> dest = new ArrayList<String>();
-         for (Event e : mf.events) {
+         for (Event e : trace.events) {
             if (e.type == Event.Type.OUTCOMING_DATA_STARTED) src = e.source;
             else if (e.type == Event.Type.HANDLING) dest.add(e.source);
          }
@@ -94,7 +95,7 @@ class PrintMessageFlow implements Processor {
       Map<String, Long> localEvents = new HashMap<String, Long>();
       Event prevEvent = null;
       Set<String> participants = new TreeSet<String>();
-      for (Event event : mf.events) {
+      for (Event event : trace.events) {
          longestThreadName = Math.max(longestThreadName, event.threadName.length());
          participants.add(event.source + "|" + event.threadName);
 
@@ -112,7 +113,7 @@ class PrintMessageFlow implements Processor {
 
       prevEvent = null;
       localEvents.clear();
-      for (Event event : mf.events) {
+      for (Event event : trace.events) {
          outLine++;
          out.print(format.format(event.timestamp));
          /* Global time delta */

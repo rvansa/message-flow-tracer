@@ -40,7 +40,7 @@ class Event implements Comparable<Event> {
       OUTCOMING_DATA_FINISHED("ODFinished"),
       CHECKPOINT("Checkpoint"),
       MESSAGE_TAG("MsgTag"),
-      FLOW_TAG("FlowTag"),
+      TRACE_TAG("FlowTag"),
       STACKPOINT("Stackpoint"),
       HANDLING("Handling"),
       DISCARD("Discard"),
@@ -77,18 +77,18 @@ class Event implements Comparable<Event> {
    public long nanoTime;
    public long roundingError;
    public String source;
-   public int controlFlow;
+   public int span;
    public String threadName;
    public Type type;
    public String text;
 
-   public Event(long originNanoTime, long originUnixTime, long nanoTime, String source, int controlFlow, String threadName, String type, String text) {
+   public Event(long originNanoTime, long originUnixTime, long nanoTime, String source, int span, String threadName, String type, String text) {
       this.type = Type.get(type);
       this.timestamp = new Date((nanoTime - originNanoTime) / 1000000 + originUnixTime);
       this.roundingError = (nanoTime - originNanoTime) % 1000000;
       this.nanoTime = nanoTime;
       this.source = source;
-      this.controlFlow = controlFlow;
+      this.span = span;
       this.threadName = threadName;//fromDictionary(threadName);
       this.text = text;//fromDictionary(message);
    }

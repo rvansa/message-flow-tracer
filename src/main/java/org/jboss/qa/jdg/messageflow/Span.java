@@ -35,22 +35,22 @@ import java.util.Set;
 *
 * @author Radim Vansa &lt;rvansa@redhat.com&gt;
 */
-class ControlFlow {
-   private final ControlFlow parent;
+class Span {
+   private final Span parent;
    private String incoming;
    private Set<String> outcoming;
    private Set<LocalEvent> events = new HashSet<LocalEvent>();
-   private List<ControlFlow> children = new ArrayList<ControlFlow>();
+   private List<Span> children = new ArrayList<Span>();
 
    private int counter = 1;
    private boolean retransmission;
    private boolean threadLocalOnly = true;
 
-   public ControlFlow() {
+   public Span() {
       parent = null;
    }
 
-   public ControlFlow(ControlFlow parent) {
+   public Span(Span parent) {
       this.parent = parent;
       synchronized (parent) {
          parent.children.add(this);
@@ -69,21 +69,21 @@ class ControlFlow {
       //System.err.printf("INC %08x -> %d\n", this.hashCode(), counter);
    }
 
-   public void decrementRefCount(Queue<ControlFlow> finishedFlows) {
+   public void decrementRefCount(Queue<Span> finishedSpans) {
       if (parent != null) {
-         parent.decrementRefCount(finishedFlows);
+         parent.decrementRefCount(finishedSpans);
          return;
       }
       synchronized (this) {
          counter--;
          //System.err.printf("DEC %08x -> %d\n", this.hashCode(), counter);
          if (counter == 0) {
-            passToFinished(finishedFlows);
+            passToFinished(finishedSpans);
          }
       }
    }
 
-   private void passToFinished(Queue<ControlFlow> finishedFlows) {
+   private void passToFinished(Queue<Span> finishedSpans) {
       if (parent != null) {
          for (LocalEvent e : parent.events) {
             events.add(e);
@@ -99,10 +99,10 @@ class ControlFlow {
       }
       if (children.isEmpty()) {
          //System.err.printf("%08x finished\n", this.hashCode());
-         finishedFlows.add(this);
+         finishedSpans.add(this);
       } else {
-         for (ControlFlow child : children) {
-            child.passToFinished(finishedFlows);
+         for (Span child : children) {
+            child.passToFinished(finishedSpans);
          }
       }
    }
@@ -128,9 +128,9 @@ class ControlFlow {
 
    public synchronized void writeTo(PrintStream stream) {
       if (isRetransmission()) {
-         stream.print(MessageFlow.NON_CAUSAL);
+         stream.print(Trace.NON_CAUSAL);
       } else {
-         stream.print(MessageFlow.CONTROL_FLOW);
+         stream.print(Trace.SPAN);
       }
       stream.print(';');
       stream.print(incoming);
@@ -142,7 +142,7 @@ class ControlFlow {
       }
       stream.println();
       for (LocalEvent evt : events) {
-         stream.print(MessageFlow.EVENT);
+         stream.print(Trace.EVENT);
          stream.print(';');
          stream.print(evt.timestamp);
          stream.print(';');
@@ -154,7 +154,7 @@ class ControlFlow {
       }
    }
 
-   public ControlFlow getParent() {
+   public Span getParent() {
       return parent;
    }
 

@@ -14,9 +14,9 @@ Add this to the command when running the JVM:
    script:/path/to/MessageFlowTracer_jgroups-(JGroups version).btm,\
    script:/path/to/MessageFlowTracer_ispn-(Infinispan version).btm
 
-By default the logs are written to /tmp/controlflow.txt, you can change this by specifying
+By default the logs are written to /tmp/span.txt, you can change this by specifying
    
--Dorg.jboss.qa.messageflowtracer.output=/other/location/controlflow.txt
+-Dorg.jboss.qa.messageflowtracer.output=/other/location/span.txt
 
 (if you're using shared location, set this variable different for each instance)
    
@@ -27,20 +27,18 @@ Remarks:
 * Currently running with message-flow-tracer enabled means about 2-3x worse performance (standard stress-test, distributed mode without transactions).
 * Although it would certainly improve performance, you cannot use org.jboss.byteman.compileToBytecode option. This is due to Byteman bugs traced in BYTEMAN-235 and BYTEMAN-236 JIRAs.
 
-
-
-MERGING CONTROL FLOW TRACES INTO MESSSAGE FLOWS
+MERGING SPANS INTO TRACES
 -----------------------------------------------
 
-Each instance creates log of events raised locally in this instance. Each set of such events that are raised causally (in the same or different thread) is called control flow. These control flows can be then merged into a message flow - a logical unit serving one request (e.g. command), or operation started by a timer which results in one or more messages processed in multiple threads.
+Each instance creates log of events raised locally in this instance. Each set of such events that are raised causally (in the same or different thread) is called SPAN. These spans can be then merged into a TRACE - a logical unit serving one request (e.g. command), or operation started by a timer which results in one or more messages processed in multiple threads.
 There are some threads that send messages which are not causally related (such as during multiple messages retransmission) - these are called non-causal.
 
-In order to produce log of merge flows, run
+In order to produce log of traces, run
 
-java -cp message-flow-tracer.jar org.jboss.qa.jdg.messageflow.Composer -p /path/to/output_log.txt /control/flow/for/instance1.txt /control/flow/for/instance2.txt ...
+java -jar message-flow-tracer.jar -p -o /path/to/output_log.txt /span/for/instance1.txt /span/for/instance2.txt ...
 
-The message flows are not sorted in the output log in any particular order, these are written as soon as no more control flow should participate in the processing.
-The merge process is two phase - in first phase we record the number of occurrences for all messages, in the second phase the control flows are actually merged. All message counts have to be stored in memory in one moment, therefore, the process may require a great amount of memory. The amount of memory required for second phase should be limited (does not depend on the overall amount of control flows).
+The traces are not sorted in the trace output log in any particular order, these are written as soon as no more spans should participate in the processing.
+The merge process has two phases - in the first phase we record the number of occurrences for all messages, in the second phase the spans are actually merged. All message counts have to be stored in memory in one moment, therefore, the process may require a great amount of memory. The amount of memory required for second phase should be limited (does not depend on the overall amount of spans).
 
 The output contains logs in this format:
 MF (number of messages)
@@ -63,7 +61,7 @@ other service messages: src[|dest]|(protocol)[(type):](identification)
 Messages that have no unique identifer (such as PING, FD_ALL) use wall time unix timestamp (in seconds) as identification. Therefore, it's possible that these are not properly matched.
 
 Event types:
-* Incoming - something was just received from the socket. The payload may carry one or more messages. However, each message will eventually create it's own control flow.
+* Incoming - something was just received from the socket. The payload may carry one or more messages. However, each message will eventually create it's own span.
 * THStarted - we have requested another thread to process some data
 * THSuccess - another thread has started processing the data
 * THFailure - the data were rejected and will not be processed
@@ -75,7 +73,7 @@ Event types:
 * Checkpoint - user-defined stuff has been encountered
 * Stackpoint - trace of the current stack (expensive operation, use for debugging)
 * MsgTag - the business logic of the message was identifed
-* FlowTag - the business logic of the message flow was identified
+* TraceTag - the business logic of the trace was identified
 * Retransmission - other node has retransmitted some message (non-causally)
 
 The events are sorted according to wall time timestamp (and that may differ on different nodes). However, events on the same node are always sorted properly. Causal sorting is TODO.
@@ -87,7 +85,7 @@ The message processing can be statistically processed. In order to categorize th
 
 The processing is started with
 
-java -cp message-flow-tracer.jar org.jboss.qa.jdg.messageflow.Composer -m /control/flow/for/instance1.txt /control/flow/for/instance2.txt ...
+java -jar message-flow-tracer.jar -m /span/for/instance1.txt /span/for/instance2.txt ...
 
 Then a report is produced with these information:
 * Incoming to handle time: specifies the delay between reading the message from the socket and the moment we start to process this message (which happens in another thread).
@@ -101,17 +99,29 @@ Then a report is produced with these information:
 
 The report contains total number of lost/transmission not detected messages.
 
-MESSAGE FLOW STATISTICS
+TRACE STATISTICS
 -----------------------
 
-For each message flow tagged with flowTag a statistics are produced. We write down the total amount of message flows tagged with this flowTag and average, minimum and maximum amount of messages sent from a message flow.
-Then we write down average amount of messages of each tag(s) and average number of nodes participating in the message flow.
+For each trace tagged with traceTag a statistics are produced. We write down the total amount of traces tagged with this traceTag and average, minimum and maximum amount of messages sent from a trace.
+Then we write down average amount of messages of each tag(s) and average number of nodes participating in the trace.
 The number of participating threads is reported as well, where one physical thread can participate multiple times if it processes multiple requests.
 The processing time denotes sum of time for all threads that this request has blocked, not CPU time (the thread can sleep while blocked).
+
+java -jar message-flow-tracer.jar -t /span/for/instance1.txt /span/for/instance2.txt ...
 
 LOCKING STATISTICS
 ------------------
 
 TODO
 
+USAGE REFERENCE
+--------------------
+Usage  [-r] [-p|-m|-l|-t|-a] [-o trace_log] span_logs...
+-r    Report memory usage
+-p    Print log of traces
+-m    Analyze messages
+-l    Analyze locks
+-t    Analyze traces
+-a    Prints log of traces and runs all available analyses
+-o    Trace log output file
 

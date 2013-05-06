@@ -34,17 +34,17 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * This class should track the execution path from the external request
- * (such as Cache.put() call) on one node, tracking the requests into ControlFlows.
+ * (such as Cache.put() call) on one node, tracking the requests into Spans.
  *
  * @author Radim Vansa &lt;rvansa@redhat.com&gt;
  */
 public class Tracer {
-   private static ConcurrentHashMap<Object, ControlFlow> controlFlows = new ConcurrentHashMap<Object, ControlFlow>();
+   private static ConcurrentHashMap<Object, Span> spans = new ConcurrentHashMap<Object, Span>();
    private static ConcurrentHashMap<Object, AtomicInteger> referenceCounters = new ConcurrentHashMap<Object, AtomicInteger>();
-   private static ConcurrentLinkedQueue<ControlFlow> finishedFlows = new ConcurrentLinkedQueue<ControlFlow>();
+   private static ConcurrentLinkedQueue<Span> finishedSpans = new ConcurrentLinkedQueue<Span>();
 
-   private static ThreadLocal<ControlFlow> contextFlow = new ThreadLocal<ControlFlow>();
-   private static ThreadLocal<Object> contextData = new ThreadLocal<Object>();
+   private static ThreadLocal<Span> contextSpan = new ThreadLocal<Span>();
+   private static ThreadLocal<Object> contextAnnotation = new ThreadLocal<Object>();
 
    private static ConcurrentHashMap<Object, String> markedObjects = new ConcurrentHashMap<Object, String>();
 
@@ -55,15 +55,15 @@ public class Tracer {
          @Override
          public void run() {
             String path = System.getProperty("org.jboss.qa.messageflowtracer.output");
-            if (path == null) path = "/tmp/controlflow.txt";
+            if (path == null) path = "/tmp/span.txt";
             PrintStream writer = null;
             try {
                writer = new PrintStream(new BufferedOutputStream(new FileOutputStream(path)));
                writer.printf("%d=%d\n", System.nanoTime(), System.currentTimeMillis());
-               while (running || !finishedFlows.isEmpty()) {
-                  ControlFlow flow;
-                  while ((flow = finishedFlows.poll()) != null) {
-                     flow.writeTo(writer);
+               while (running || !finishedSpans.isEmpty()) {
+                  Span span;
+                  while ((span = finishedSpans.poll()) != null) {
+                     span.writeTo(writer);
                   }
                   try {
                      Thread.sleep(10);
@@ -81,7 +81,7 @@ public class Tracer {
          }
       };
       writer.setDaemon(true);
-      writer.setName("MessageFlowWriter");
+      writer.setName("SpanWriter");
       writer.start();
       Runtime.getRuntime().addShutdownHook(new Thread() {
          @Override
@@ -94,20 +94,20 @@ public class Tracer {
                }
             }
             reportReferenceCounters();
-            reportControlFlows();
-            System.err.println(finishedFlows.size() + " not written finished flows.");
+            reportSpans();
+            System.err.println(finishedSpans.size() + " not written finished spans.");
          }
 
-         private void reportControlFlows() {
-            System.err.println(controlFlows.size() + " unfinished control flows");
+         private void reportSpans() {
+            System.err.println(spans.size() + " unfinished spans");
             int counter = 0;
-            for (Map.Entry<Object, ControlFlow> entry : controlFlows.entrySet()) {
+            for (Map.Entry<Object, Span> entry : spans.entrySet()) {
                System.out.printf("%08x (refcount=%s) -> ", entry.getKey().hashCode(), referenceCounters.get(entry.getKey()));
                entry.getValue().writeTo(System.out);
                if (++counter > 500) break; // shutdown hook must execute quickly
             }
             if (counter > 500) {
-               System.out.println("Too many control flows, truncated...");
+               System.out.println("Too many unfinished spans, truncated...");
             }
          }
 
@@ -129,86 +129,86 @@ public class Tracer {
     * User entry into control flow
     */
    public void createManagedContext() {
-      contextData.set(new Object());
+      contextAnnotation.set(new Object());
    }
 
    /**
     * User exit from control flow
     */
    public void destroyManagedContext() {
-      ControlFlow flow = contextFlow.get();
-      if (flow.isThreadLocalOnly()) {
-         finishedFlows.add(flow);
+      Span span = contextSpan.get();
+      if (span.isThreadLocalOnly()) {
+         finishedSpans.add(span);
       }
       cleanContext();
    }
 
    public void incomingData() {
-      ensureContextFlow().addEvent(Event.Type.INCOMING_DATA, null);
+      ensureSpan().addEvent(Event.Type.INCOMING_DATA, null);
    }
 
-   public void setContextData(Object data) {
-      contextData.set(data);
-      incrementRefCount(data);
-      ControlFlow flow = contextFlow.get();
-      if (flow != null) {
-         //System.err.printf("%s set %08x -> %08x\n", Thread.currentThread().getName(), data.hashCode(), flow.hashCode());
-         ControlFlow other = controlFlows.putIfAbsent(data, flow);
+   public void setContextData(Object annotation) {
+      contextAnnotation.set(annotation);
+      incrementRefCount(annotation);
+      Span span = contextSpan.get();
+      if (span != null) {
+         //System.err.printf("%s set %08x -> %08x\n", Thread.currentThread().getName(), annotation.hashCode(), span.hashCode());
+         Span other = spans.putIfAbsent(annotation, span);
          if (other != null) {
             throw new IllegalStateException();
          }
-         flow.setThreadLocalOnly(false);
+         span.setThreadLocalOnly(false);
       }
    }
 
    public void cleanContext() {
-      contextData.remove();
-      contextFlow.remove();
+      contextAnnotation.remove();
+      contextSpan.remove();
    }
 
    /**
     * The control flow will be passed to another thread. Either the new thread should call threadHandoverSuccess
     * or any thread should call threadHandoverFailure.
-    * @param data
+    * @param annotation
     */
-   public void threadHandoverStarted(Object data) {
-      incrementRefCount(data);
-      ControlFlow mf = ensureContextFlow();
-      ControlFlow prev = controlFlows.putIfAbsent(data, mf);
-      if (prev != null && prev != mf) {
+   public void threadHandoverStarted(Object annotation) {
+      incrementRefCount(annotation);
+      Span span = ensureSpan();
+      Span prev = spans.putIfAbsent(annotation, span);
+      if (prev != null && prev != span) {
          throw new IllegalStateException();
       }
-      mf.setThreadLocalOnly(false);
-      mf.addEvent(Event.Type.THREAD_HANDOVER_STARTED, null);
+      span.setThreadLocalOnly(false);
+      span.addEvent(Event.Type.THREAD_HANDOVER_STARTED, null);
    }
 
    /**
-    * The control flow was passed to another thread and this is now processing the data
-    * @param data
+    * The control flow was passed to another thread and this is now processing the annotation
+    * @param annotation
     */
-   public void threadHandoverSuccess(Object data) {
-      if (!referenceCounters.containsKey(data)) {
+   public void threadHandoverSuccess(Object annotation) {
+      if (!referenceCounters.containsKey(annotation)) {
          // we have not registered handover start
          return;
       }
-      contextData.set(data);
-      ensureContextFlow().addEvent(Event.Type.THREAD_HANDOVER_SUCCESS, null);
+      contextAnnotation.set(annotation);
+      ensureSpan().addEvent(Event.Type.THREAD_HANDOVER_SUCCESS, null);
    }
 
    public void threadHandoverFailure() {
-      ensureContextFlow().addEvent(Event.Type.THREAD_HANDOVER_FAILURE, null);
-      decrementRefCount(contextData.get());
+      ensureSpan().addEvent(Event.Type.THREAD_HANDOVER_FAILURE, null);
+      decrementRefCount(contextAnnotation.get());
    }
 
    public void messageHandlingStarted(String messageId) {
-      ControlFlow current = contextFlow.get();
-      ControlFlow child = new ControlFlow(current);
-      contextFlow.set(child);
+      Span current = contextSpan.get();
+      Span child = new Span(current);
+      contextSpan.set(child);
       child.setThreadLocalOnly(false);
-      //System.err.printf("%s start %08x %08x -> %08x\n", Thread.currentThread().getName(), contextData.get().hashCode(), current.hashCode(), child.hashCode());
-      if (!controlFlows.replace(contextData.get(), current, child)) {
+      //System.err.printf("%s start %08x %08x -> %08x\n", Thread.currentThread().getName(), contextAnnotation.get().hashCode(), current.hashCode(), child.hashCode());
+      if (!spans.replace(contextAnnotation.get(), current, child)) {
          // the message has local origin
-         ControlFlow other = controlFlows.putIfAbsent(contextData.get(), child);
+         Span other = spans.putIfAbsent(contextAnnotation.get(), child);
          if (other != null) {
             //System.err.printf("Should be %08x\n", current.hashCode());
             //current.writeTo(System.err);
@@ -222,81 +222,81 @@ public class Tracer {
    }
 
    public void messageHandlingFinished() {
-      ControlFlow current = contextFlow.get();
-      contextFlow.set(current.getParent());
-      //System.err.printf("%s finish %08x %08x -> %08x\n", Thread.currentThread().getName(), contextData.get().hashCode(), current.hashCode(), current.parent.hashCode());
-      if (!controlFlows.replace(contextData.get(), current, current.getParent())) {
+      Span current = contextSpan.get();
+      contextSpan.set(current.getParent());
+      //System.err.printf("%s finish %08x %08x -> %08x\n", Thread.currentThread().getName(), contextAnnotation.get().hashCode(), current.hashCode(), current.parent.hashCode());
+      if (!spans.replace(contextAnnotation.get(), current, current.getParent())) {
          throw new IllegalStateException();
       }
    }
 
    public void discardMessages(List<String> messageIds) {
       if (messageIds == null) return;
-      ControlFlow mf = ensureContextFlow();
+      Span mf = ensureSpan();
       for (String messageId : messageIds) {
-         ControlFlow child = new ControlFlow(mf);
+         Span child = new Span(mf);
          child.setIncoming(messageId);
          child.addEvent(Event.Type.DISCARD, messageId);
       }
    }
 
-   public void associateData(Object newData) {
-      if (newData == null) {
+   public void associateData(Object newAnnotation) {
+      if (newAnnotation == null) {
          throw new IllegalArgumentException();
       }
-      ControlFlow flow = ensureContextFlow();
-      //System.err.printf("%s assoc %08x -> %08x\n", Thread.currentThread().getName(), newData.hashCode(), flow.hashCode());
-      ControlFlow old = controlFlows.putIfAbsent(newData, flow);
+      Span span = ensureSpan();
+      //System.err.printf("%s assoc %08x -> %08x\n", Thread.currentThread().getName(), newAnnotation.hashCode(), span.hashCode());
+      Span old = spans.putIfAbsent(newAnnotation, span);
       if (old != null) {
-//         System.err.println("Old flow:");
+//         System.err.println("Old span:");
 //         old.writeTo(System.err);
-//         System.err.println("New flow:");
-//         old.writeTo(System.err);
-         throw new IllegalArgumentException("New data already have message flow");
+//         System.err.println("New span:");
+//         span.writeTo(System.err);
+         throw new IllegalArgumentException("New data already have span");
       }
-      flow.setThreadLocalOnly(false);
-      flow.incrementRefCount();
+      span.setThreadLocalOnly(false);
+      span.incrementRefCount();
    }
 
-   private ControlFlow ensureContextFlow() {
-      ControlFlow mf = contextFlow.get();
-      if (mf == null) {
-         Object data = contextData.get();
-         if (data != null) {
-            mf = controlFlows.get(data);
+   private Span ensureSpan() {
+      Span span = contextSpan.get();
+      if (span == null) {
+         Object annotation = contextAnnotation.get();
+         if (annotation != null) {
+            span = spans.get(annotation);
          }
-         if (mf == null) {
-            mf = new ControlFlow();
+         if (span == null) {
+            span = new Span();
          }
-         contextFlow.set(mf);
+         contextSpan.set(span);
       }
-      return mf;
+      return span;
    }
 
-   private void incrementRefCount(Object data) {
-      AtomicInteger refCount = referenceCounters.putIfAbsent(data, new AtomicInteger(1));
+   private void incrementRefCount(Object annotation) {
+      AtomicInteger refCount = referenceCounters.putIfAbsent(annotation, new AtomicInteger(1));
       if (refCount != null) {
          int count = refCount.incrementAndGet();
-         //System.err.printf("%08x inc to %d in %s\n", data.hashCode(), count, Thread.currentThread().getName());
+         //System.err.printf("%08x inc to %d in %s\n", annotation.hashCode(), count, Thread.currentThread().getName());
       }
    }
 
-   private void decrementRefCount(Object data) {
-      AtomicInteger refCount = referenceCounters.get(data);
+   private void decrementRefCount(Object annotation) {
+      AtomicInteger refCount = referenceCounters.get(annotation);
       if (refCount == null) {
          throw new IllegalStateException();
       }
-      //System.out.printf("%08x refcount = %d in %s\n", data.hashCode(), refCount.get(), Thread.currentThread().getName());
+      //System.out.printf("%08x refcount = %d in %s\n", annotation.hashCode(), refCount.get(), Thread.currentThread().getName());
       if (refCount.decrementAndGet() == 0) {
-         //System.out.printf("%08x removing refcount in %s\n", data.hashCode(), Thread.currentThread().getName());
-         referenceCounters.remove(data);
-         ControlFlow flow = controlFlows.remove(data);
-         //System.err.printf("%s rem %08x -> %08x\n", Thread.currentThread().getName(), data.hashCode(), flow.hashCode());
-         if (flow == null) {
-            System.err.println("Data were not identified!");
+         //System.out.printf("%08x removing refcount in %s\n", annotation.hashCode(), Thread.currentThread().getName());
+         referenceCounters.remove(annotation);
+         Span span = spans.remove(annotation);
+         //System.err.printf("%s rem %08x -> %08x\n", Thread.currentThread().getName(), annotation.hashCode(), span.hashCode());
+         if (span == null) {
+            System.err.println("Annotation was not identified!");
             return;
          }
-         flow.decrementRefCount(finishedFlows);
+         span.decrementRefCount(finishedSpans);
       }
    }
 
@@ -304,8 +304,8 @@ public class Tracer {
     * The control flow has returned to the point where the thread started processing this message
     */
    public void threadProcessingComplete() {
-      ensureContextFlow().addEvent(Event.Type.THREAD_PROCESSING_COMPLETE, null);
-      decrementRefCount(contextData.get());
+      ensureSpan().addEvent(Event.Type.THREAD_PROCESSING_COMPLETE, null);
+      decrementRefCount(contextAnnotation.get());
       cleanContext();
    }
 
@@ -313,24 +313,24 @@ public class Tracer {
     * We are about to send message (sync/async) to another node
     */
    public void outcomingStarted(String messageId) {
-      ControlFlow mf = ensureContextFlow();
-      mf.addOutcoming(messageId);
-      mf.addEvent(Event.Type.OUTCOMING_DATA_STARTED, messageId);
+      Span span = ensureSpan();
+      span.addOutcoming(messageId);
+      span.addEvent(Event.Type.OUTCOMING_DATA_STARTED, messageId);
    }
 
    public void outcomingFinished() {
-      ControlFlow flow = contextFlow.get();
-      flow.addEvent(Event.Type.OUTCOMING_DATA_FINISHED, null);
-      if (contextData.get() == null && flow.isThreadLocalOnly()) {
-         finishedFlows.add(flow);
-         contextFlow.remove();
+      Span span = contextSpan.get();
+      span.addEvent(Event.Type.OUTCOMING_DATA_FINISHED, null);
+      if (contextAnnotation.get() == null && span.isThreadLocalOnly()) {
+         finishedSpans.add(span);
+         contextSpan.remove();
       }
    }
 
    public void setNonCausal() {
-      ControlFlow flow = contextFlow.get();
-      if (flow != null) {
-         flow.setNonCausal(true);
+      Span span = contextSpan.get();
+      if (span != null) {
+         span.setNonCausal(true);
       }
    }
 
@@ -339,19 +339,19 @@ public class Tracer {
     * @param message
     */
    public void checkpoint(String message) {
-      ensureContextFlow().addEvent(Event.Type.CHECKPOINT, message);
+      ensureSpan().addEvent(Event.Type.CHECKPOINT, message);
    }
 
-   public void flowTag(String tag) {
-      ensureContextFlow().addEvent(Event.Type.FLOW_TAG, tag);
+   public void traceTag(String tag) {
+      ensureSpan().addEvent(Event.Type.TRACE_TAG, tag);
    }
 
    public void msgTag(String tag) {
-      ensureContextFlow().addEvent(Event.Type.MESSAGE_TAG, tag);
+      ensureSpan().addEvent(Event.Type.MESSAGE_TAG, tag);
    }
 
    public void msgTagWithClass(Object object) {
-      ensureContextFlow().addEvent(Event.Type.MESSAGE_TAG, object.getClass().getSimpleName());
+      ensureSpan().addEvent(Event.Type.MESSAGE_TAG, object.getClass().getSimpleName());
    }
 
    public void stackpoint() {
@@ -360,11 +360,11 @@ public class Tracer {
       for (StackTraceElement ste : stackTrace) {
          message.append(" at ").append(ste);
       }
-      ensureContextFlow().addEvent(Event.Type.STACKPOINT, message.toString());
+      ensureSpan().addEvent(Event.Type.STACKPOINT, message.toString());
    }
 
    public boolean hasContextData() {
-      return contextData.get() != null;
+      return contextAnnotation.get() != null;
    }
 
    public void setMark(Object obj, String mark) {
@@ -390,8 +390,8 @@ public class Tracer {
    }
 
    public String getLastMsgTag() {
-      ControlFlow flow = contextFlow.get();
-      if (flow == null) return null;
-      return flow.getLastMsgTag();
+      Span span = contextSpan.get();
+      if (span == null) return null;
+      return span.getLastMsgTag();
    }
 }

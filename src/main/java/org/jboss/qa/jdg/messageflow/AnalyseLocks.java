@@ -23,12 +23,23 @@
 package org.jboss.qa.jdg.messageflow;
 
 /**
- * Processes message traces (does the datamining).
+ * // TODO: Document this
  *
  * @author Radim Vansa &lt;rvansa@redhat.com&gt;
  */
-public interface Processor {
-   void init(Composer composer);
-   void process(Trace trace);
-   void finish();
+public class AnalyseLocks implements Processor {
+   @Override
+   public void init(Composer composer) {
+      // TODO: Customise this generated block
+   }
+
+   @Override
+   public void process(Trace trace) {
+      // TODO: Customise this generated block
+   }
+
+   @Override
+   public void finish() {
+      // TODO: Customise this generated block
+   }
 }

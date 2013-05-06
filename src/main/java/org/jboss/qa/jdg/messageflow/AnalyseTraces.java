@@ -34,16 +34,16 @@ import java.util.TreeSet;
 /**
  * @author Radim Vansa &lt;rvansa@redhat.com&gt;
  */
-public class AnalyzeFlows implements Processor {
+public class AnalyseTraces implements Processor {
 
    private static final String NO_TAG = "-no-tag-";
-   private Map<String, FlowStats> flowStats = new TreeMap<String, FlowStats>();
+   private Map<String, TraceStats> traceStats = new TreeMap<String, TraceStats>();
    private PrintStream out = System.out;
 
-   private static class FlowStats {
+   private static class TraceStats {
       final String tag;
       TreeMap<String, Integer> msgOccurrences = new TreeMap<String, Integer>();
-      int flows;
+      int traces;
       int sumNodes;
 
       int sumMessages;
@@ -62,7 +62,7 @@ public class AnalyzeFlows implements Processor {
       long minWallTime = Long.MAX_VALUE;
       long maxWallTime;
 
-      private FlowStats(String tag) {
+      private TraceStats(String tag) {
          this.tag = tag;
       }
    }
@@ -72,29 +72,29 @@ public class AnalyzeFlows implements Processor {
    }
 
    @Override
-   public void process(MessageFlow mf) {
-      String flowTag = NO_TAG;
-      for (Event event : mf.events) {
-         if (event.type == Event.Type.FLOW_TAG) {
-            flowTag = event.text;
+   public void process(Trace trace) {
+      String traceTag = NO_TAG;
+      for (Event event : trace.events) {
+         if (event.type == Event.Type.TRACE_TAG) {
+            traceTag = event.text;
             break;
          }
       }
-      FlowStats stats = flowStats.get(flowTag);
+      TraceStats stats = traceStats.get(traceTag);
       if (stats == null) {
-         stats = new FlowStats(flowTag);
-         flowStats.put(flowTag, stats);
+         stats = new TraceStats(traceTag);
+         traceStats.put(traceTag, stats);
       }
-      stats.minMessages = Math.min(stats.minMessages, mf.messages.size());
-      stats.maxMessages = Math.max(stats.maxMessages, mf.messages.size());
-      stats.sumMessages += mf.messages.size();
-      stats.flows++;
-      for (String message : mf.messages) {
+      stats.minMessages = Math.min(stats.minMessages, trace.messages.size());
+      stats.maxMessages = Math.max(stats.maxMessages, trace.messages.size());
+      stats.sumMessages += trace.messages.size();
+      stats.traces++;
+      for (String message : trace.messages) {
          TreeSet<String> msgTags = new TreeSet<String>();
-         for (Event event : mf.events) {
+         for (Event event : trace.events) {
             if (event.type == Event.Type.HANDLING && event.text.equals(message)) {
-               for (Event e : mf.events) {
-                  if (e.type == Event.Type.MESSAGE_TAG && e.source == event.source && e.controlFlow == event.controlFlow) {
+               for (Event e : trace.events) {
+                  if (e.type == Event.Type.MESSAGE_TAG && e.source == event.source && e.span == event.span) {
                      msgTags.add(e.text);
                   }
                }
@@ -123,7 +123,7 @@ public class AnalyzeFlows implements Processor {
       int threads = 0;
       long nanoTime = 0;
       Set<String> nodes = new HashSet<String>();
-      for (Event e : mf.events) {
+      for (Event e : trace.events) {
          nodes.add(e.source);
          String nodeThread = e.source + "|" + e.threadName;
          Long timestamp = startTimestamps.get(nodeThread);
@@ -150,7 +150,7 @@ public class AnalyzeFlows implements Processor {
       stats.sumNanoTime += nanoTime;
       stats.minNanoTime = Math.min(nanoTime, stats.minNanoTime);
       stats.maxNanoTime = Math.max(nanoTime, stats.maxNanoTime);
-      long wallTime = mf.events.last().timestamp.getTime() - mf.events.first().timestamp.getTime();
+      long wallTime = trace.events.last().timestamp.getTime() - trace.events.first().timestamp.getTime();
       stats.sumWallTime += wallTime;
       stats.minWallTime = Math.min(wallTime, stats.minWallTime);
       stats.maxWallTime = Math.max(wallTime, stats.maxWallTime);
@@ -162,18 +162,18 @@ public class AnalyzeFlows implements Processor {
 
    @Override
    public void finish() {
-      out.println("Flows statistics");
-      for (FlowStats stats : flowStats.values()) {
-         out.printf("%s:\t%d message flows, avg %1.2f msg (%d - %d)\n", stats.tag, stats.flows,
-                    (double) stats.sumMessages / stats.flows, stats.minMessages, stats.maxMessages);
+      out.println("Traces statistics");
+      for (TraceStats stats : traceStats.values()) {
+         out.printf("%s:\t%d traces, avg %1.2f msg (%d - %d)\n", stats.tag, stats.traces,
+                    (double) stats.sumMessages / stats.traces, stats.minMessages, stats.maxMessages);
          for (Map.Entry<String, Integer> message : stats.msgOccurrences.entrySet()) {
-            out.printf("\t%1.2fx: %s\n", (double) message.getValue() / stats.flows, message.getKey());
+            out.printf("\t%1.2fx: %s\n", (double) message.getValue() / stats.traces, message.getKey());
          }
-         out.printf("\tavg %1.2f nodes, avg %2.2f threads (%d - %d)\n", (double) stats.sumNodes / stats.flows,
-                    (double) stats.sumThreads / stats.flows, stats.minThreads, stats.maxThreads);
+         out.printf("\tavg %1.2f nodes, avg %2.2f threads (%d - %d)\n", (double) stats.sumNodes / stats.traces,
+                    (double) stats.sumThreads / stats.traces, stats.minThreads, stats.maxThreads);
          out.printf("\tProcessing took avg %.2f us (%.2f - %.2f)\n",
-                    (double) stats.sumNanoTime / (stats.flows * 1000d), stats.minNanoTime / 1000d, stats.maxNanoTime / 1000d);
-         out.printf("\tWall time delta %d ms (%d - %d)\n\n",  stats.sumWallTime / stats.flows, stats.minWallTime, stats.maxWallTime);
+                    (double) stats.sumNanoTime / (stats.traces * 1000d), stats.minNanoTime / 1000d, stats.maxNanoTime / 1000d);
+         out.printf("\tWall time delta %d ms (%d - %d)\n\n",  stats.sumWallTime / stats.traces, stats.minWallTime, stats.maxWallTime);
       }
    }
 }

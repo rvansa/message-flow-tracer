@@ -32,7 +32,7 @@ import java.util.TreeMap;
 /**
  * @author Radim Vansa &lt;rvansa@redhat.com&gt;
  */
-public class AnalyzeMessages implements Processor {
+public class AnalyseMessages implements Processor {
 
    private static final String NO_TAG = "-no-tag-";
    private Map<String, TaggedStats> stats = new TreeMap<String, TaggedStats>();
@@ -161,13 +161,13 @@ public class AnalyzeMessages implements Processor {
    }
 
    @Override
-   public void process(MessageFlow mf) {
-      for (String message : mf.messages) {
+   public void process(Trace trace) {
+      for (String message : trace.messages) {
          ArrayList<Event> sent = new ArrayList<Event>();
          Map<String, ArrayList<Event>> incoming = new HashMap<String, ArrayList<Event>>();
          Map<String, TaggedStats> stats = new HashMap<String, TaggedStats>();
          // iterating in the time order
-         for (Event event : mf.events) {
+         for (Event event : trace.events) {
             if (event.text == null || !event.text.equals(message)) continue;
             if (event.type == Event.Type.OUTCOMING_DATA_STARTED || event.type == Event.Type.RETRANSMISSION) {
                sent.add(event);
@@ -179,19 +179,19 @@ public class AnalyzeMessages implements Processor {
                }
                Event e = event;
                if (event.type == Event.Type.HANDLING) {
-                  e = findIncoming(mf.events, event.source, event.controlFlow);
+                  e = findIncoming(trace.events, event.source, event.span);
                }
                incomingForSource.add(e);
-               stats.putAll(findTaggedStats(mf.events, event.source, event.controlFlow));
+               stats.putAll(findTaggedStats(trace.events, event.source, event.span));
             }
          }
          if (stats.isEmpty()) {
             stats.put(NO_TAG, getTaggedStats(NO_TAG));
          }
-         for (Event event : mf.events) {
+         for (Event event : trace.events) {
             if (event.text == null || !event.text.equals(message)) continue;
             if (event.type == Event.Type.HANDLING) {
-               Event rx = findIncoming(mf.events, event.source, event.controlFlow);
+               Event rx = findIncoming(trace.events, event.source, event.span);
                for (TaggedStats ts : stats.values()) {
                   getAverage(ts.handleDelay, rx.source).add(event.nanoTime - rx.nanoTime);
                }
@@ -256,10 +256,10 @@ public class AnalyzeMessages implements Processor {
       return avg;
    }
 
-   private Map<String, TaggedStats> findTaggedStats(Collection<Event> events, String source, int controlFlow) {
+   private Map<String, TaggedStats> findTaggedStats(Collection<Event> events, String source, int span) {
       Map<String, TaggedStats> tags = new HashMap<String, TaggedStats>();
       for (Event event : events) {
-         if (event.source == source && event.controlFlow == controlFlow && event.type == Event.Type.MESSAGE_TAG) {
+         if (event.source == source && event.span == span && event.type == Event.Type.MESSAGE_TAG) {
             TaggedStats stats = getTaggedStats(event.text);
             tags.put(event.text, stats);
          }
@@ -276,9 +276,9 @@ public class AnalyzeMessages implements Processor {
       return stats;
    }
 
-   private Event findIncoming(Collection<Event> events, String source, int controlFlow) {
+   private Event findIncoming(Collection<Event> events, String source, int span) {
       for (Event event : events) {
-         if (event.type == Event.Type.INCOMING_DATA && event.source == source && event.controlFlow == controlFlow) {
+         if (event.type == Event.Type.INCOMING_DATA && event.source == source && event.span == span) {
             return event;
          }
       }
