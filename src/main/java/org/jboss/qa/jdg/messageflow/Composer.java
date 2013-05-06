@@ -81,6 +81,8 @@ public class Composer {
             composer.setProcessorClass(AnalyzeMessages.class);
          } else if (args[i].equals("-l")) {
             composer.setProcessorClass(AnalyzeLocks.class);
+         } else if (args[i].equals("-f")) {
+            composer.setProcessorClass(AnalyzeFlows.class);
          } else if (args[i].startsWith("-")) {
             System.err.println("Unknown option " + args[i]);
             printUsage();

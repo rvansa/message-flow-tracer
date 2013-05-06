@@ -104,7 +104,10 @@ The report contains total number of lost/transmission not detected messages.
 MESSAGE FLOW STATISTICS
 -----------------------
 
-TODO
+For each message flow tagged with flowTag a statistics are produced. We write down the total amount of message flows tagged with this flowTag and average, minimum and maximum amount of messages sent from a message flow.
+Then we write down average amount of messages of each tag(s) and average number of nodes participating in the message flow.
+The number of participating threads is reported as well, where one physical thread can participate multiple times if it processes multiple requests.
+The processing time denotes sum of time for all threads that this request has blocked, not CPU time (the thread can sleep while blocked).
 
 LOCKING STATISTICS
 ------------------
