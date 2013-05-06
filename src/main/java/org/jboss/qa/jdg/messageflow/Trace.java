@@ -22,7 +22,11 @@
 
 package org.jboss.qa.jdg.messageflow;
 
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.SortedSet;
 import java.util.TreeSet;
@@ -59,5 +63,49 @@ class Trace implements Comparable<Trace> {
    @Override
    public int compareTo(Trace o) {
       return events.first().compareTo(o.events.first());
+   }
+
+   public void reorderCausally() {
+      Map<String, List<Event>> eventsBySpan = new HashMap<String, List<Event>>();
+      Map<String, Set<DagVertex>> handlingCausalOrder = new HashMap<String, Set<DagVertex>>(messages.size());
+      for (Event e : events) {
+         String span = e.source + "|" + e.span;
+         List<Event> spe = eventsBySpan.get(span);
+         if (spe == null) {
+            spe = new ArrayList<Event>();
+            eventsBySpan.put(span, spe);
+         }
+         spe.add(e);
+      }
+      for (List<Event> spe : eventsBySpan.values()) {
+         DagVertex spanVertex = new DagVertex();
+         for (Event e : spe) {
+            e.causalOrder = spanVertex;
+            if (e.type == Event.Type.OUTCOMING_DATA_STARTED) {
+               // after we send data following events are not causally comparable even if the same span
+               spanVertex = new DagVertex(spanVertex);
+            } else if (e.type == Event.Type.HANDLING) {
+               Set<DagVertex> handlingVertices = handlingCausalOrder.get(e.text);
+               if (handlingVertices == null) {
+                  handlingVertices = new HashSet<DagVertex>();
+                  handlingCausalOrder.put(e.text, handlingVertices);
+               }
+               handlingVertices.add(spanVertex);
+            }
+         }
+      }
+      for (List<Event> spe : eventsBySpan.values()) {
+         for (Event e : spe) {
+            if (e.type == Event.Type.OUTCOMING_DATA_STARTED) {
+               Set<DagVertex> handlingVertices = handlingCausalOrder.get(e.text);
+               if (handlingVertices != null) {
+                  for (DagVertex v : handlingVertices) {
+                     v.addUp(e.causalOrder);
+                  }
+               }
+            }
+         }
+      }
+      events = new TreeSet<Event>(events); // copying causes reevaluation of order
    }
 }

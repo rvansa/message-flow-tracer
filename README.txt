@@ -76,7 +76,11 @@ Event types:
 * TraceTag - the business logic of the trace was identified
 * Retransmission - other node has retransmitted some message (non-causally)
 
-The events are sorted according to wall time timestamp (and that may differ on different nodes). However, events on the same node are always sorted properly. Causal sorting is TODO.
+The events are sorted according to:
+1)  Causality: sending message always precedes receiving it
+2a) On the same node, event with lower local timestamp always precedes event with higher timestamp
+3a) On different nodes, events are sorted according to wall time
+4)  In case of tie events are sorted according to their hashcode
 
 MESSAGE STATISTICS
 ------------------

@@ -81,6 +81,7 @@ class Event implements Comparable<Event> {
    public String threadName;
    public Type type;
    public String text;
+   public DagVertex causalOrder = null;
 
    public Event(long originNanoTime, long originUnixTime, long nanoTime, String source, int span, String threadName, String type, String text) {
       this.type = Type.get(type);
@@ -96,6 +97,10 @@ class Event implements Comparable<Event> {
    @Override
    public int compareTo(Event e) {
       int comparison;
+      if (causalOrder != null && e.causalOrder != null) {
+         comparison = causalOrder.compareTo(e.causalOrder);
+         if (comparison != 0) return comparison;
+      }
       if (source == e.source) {
          comparison = Long.compare(nanoTime, e.nanoTime);
       } else {

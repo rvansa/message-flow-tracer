@@ -516,6 +516,7 @@ public class Composer {
                System.err.println("Printer interrupted!");
                break;
             }
+            trace.reorderCausally();
             for (Processor processor : processors) {
                processor.process(trace);
             }
