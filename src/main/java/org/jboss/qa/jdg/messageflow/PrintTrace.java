@@ -73,6 +73,7 @@ class PrintTrace implements Processor {
          String src = null;
          ArrayList<String> dest = new ArrayList<String>();
          for (Event e : trace.events) {
+            if (e.text == null || !e.text.equals(message)) continue;
             if (e.type == Event.Type.OUTCOMING_DATA_STARTED) src = e.source;
             else if (e.type == Event.Type.HANDLING) dest.add(e.source);
          }
