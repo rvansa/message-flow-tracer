@@ -65,6 +65,95 @@ DO
   destroyManagedContext();
 ENDRULE
 
+RULE beginTx
+INTERFACE ^javax.transaction.TransactionManager
+METHOD begin
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT ENTRY
+IF TRUE
+DO
+   createManagedContext();
+   traceTag("BEGIN_TX");
+ENDRULE
+
+RULE beginTx_jbossTM
+CLASS ^com.arjuna.ats.internal.jta.transaction.arjunacore.BaseTransaction
+METHOD begin
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT ENTRY
+IF TRUE
+DO
+   createManagedContext();
+   traceTag("BEGIN_TX");
+ENDRULE
+
+#RULE beginTx_jbossTM_end
+#CLASS ^com.arjuna.ats.internal.jta.transaction.arjunacore.BaseTransaction
+#METHOD begin
+#HELPER org.jboss.qa.jdg.messageflow.Tracer
+#AT EXIT
+#IF TRUE
+#DO
+#   checkpoint("TX=" + com.arjuna.ats.internal.jta.transaction.arjunacore.TransactionImple.getTransaction());
+#ENDRULE
+
+RULE commitTx
+INTERFACE ^javax.transaction.TransactionManager
+METHOD commit
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT ENTRY
+IF TRUE
+DO
+   createManagedContext();
+   traceTag("COMMIT_TX");
+ENDRULE
+
+RULE commitTx_jbossTM
+CLASS com.arjuna.ats.internal.jta.transaction.arjunacore.BaseTransaction
+METHOD commit
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT ENTRY
+IF TRUE
+DO
+   createManagedContext();
+   traceTag("COMMIT_TX");
+#   checkpoint("TX=" + com.arjuna.ats.internal.jta.transaction.arjunacore.TransactionImple.getTransaction());
+ENDRULE
+
+RULE commitTx_jbossTM_exit
+CLASS com.arjuna.ats.internal.jta.transaction.arjunacore.TransactionImple
+METHOD commitAndDisassociate
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT LINE 1207
+IF TRUE
+DO
+   destroyManagedContext();
+ENDRULE
+
+
+RULE rollbackTx
+INTERFACE ^javax.transaction.TransactionManager
+METHOD rollback
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT ENTRY
+IF TRUE
+DO
+   createManagedContext();
+   traceTag("ROLLBACK_TX");
+ENDRULE
+
+RULE rollbackTx_jbossTM
+CLASS com.arjuna.ats.internal.jta.transaction.arjunacore.BaseTransaction
+METHOD rollback
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT ENTRY
+IF TRUE
+DO
+   createManagedContext();
+   traceTag("ROLLBACK_TX");
+#   checkpoint("TX=" + com.arjuna.ats.internal.jta.transaction.arjunacore.TransactionImple.getTransaction());
+ENDRULE
+
 RULE lock
 CLASS org.infinispan.util.concurrent.locks.LockManagerImpl
 METHOD lockAndRecord
@@ -72,7 +161,8 @@ HELPER org.jboss.qa.jdg.messageflow.Tracer
 AT ENTRY
 IF TRUE
 DO
-  checkpoint("LOCK");
+#  checkpoint("LOCK");
+  checkpoint("LOCK " + $1);
 ENDRULE
 
 RULE lockOk
@@ -102,7 +192,8 @@ HELPER org.jboss.qa.jdg.messageflow.Tracer
 AT EXIT
 IF TRUE
 DO
-  checkpoint("UNLOCK");
+#  checkpoint("UNLOCK ");
+  checkpoint("UNLOCK " + $1);
 ENDRULE
 
 RULE unlockAll
@@ -112,8 +203,8 @@ HELPER org.jboss.qa.jdg.messageflow.Tracer
 AT ENTRY
 IF TRUE
 DO
-#  checkpoint("UNLOCK_ALL" + $1.getLockedKeys());
-  checkpoint("UNLOCK_ALL");
+#  checkpoint("UNLOCK_ALL");
+  checkpoint("UNLOCK_ALL" + $1.getLockedKeys());
 ENDRULE
 
 RULE submitCallable
@@ -146,6 +237,26 @@ AT EXIT
 IF TRUE
 DO
   threadProcessingComplete();
+ENDRULE
+
+RULE dispatchCommandMulti
+CLASS org.infinispan.remoting.transport.jgroups.CommandAwareRpcDispatcher
+METHOD processCalls
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT ENTRY
+IF TRUE
+DO
+  setContextMarkWithClass($1);
+ENDRULE
+
+RULE dispatchCommandSingle
+CLASS org.infinispan.remoting.transport.jgroups.CommandAwareRpcDispatcher
+METHOD processSingleCall
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT ENTRY
+IF TRUE
+DO
+  setContextMarkWithClass($1);
 ENDRULE
 
 RULE commandPerform

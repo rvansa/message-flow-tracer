@@ -15,7 +15,7 @@ HELPER org.jboss.qa.jdg.messageflow.Tracer
 AT LINE 1310
 IF TRUE
 DO
-  setContextData($tmp);
+  setContextAnnotation($tmp);
   threadHandoverStarted($tmp);
 ENDRULE
 
@@ -70,14 +70,24 @@ DO
   threadProcessingComplete();
 ENDRULE
 
-RULE loopbackCopyDispatched
+RULE loopbackCopyDispatching
 CLASS org.jgroups.protocols.TP
 METHOD down
 HELPER org.jboss.qa.jdg.messageflow.Tracer
 AT LINE 1178
-IF hasContextData()
+IF hasContextAnnotation()
 DO
   associateData($copy);
+  threadHandoverStarted($copy);
+ENDRULE
+
+RULE loopbackCopyDispatchingUnknownSource
+CLASS org.jgroups.protocols.TP
+METHOD down
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT LINE 1178
+IF !hasContextAnnotation()
+DO
   threadHandoverStarted($copy);
 ENDRULE
 
@@ -85,10 +95,10 @@ RULE loopbackCopyDispatchedUnknownSource
 CLASS org.jgroups.protocols.TP
 METHOD down
 HELPER org.jboss.qa.jdg.messageflow.Tracer
-AT LINE 1178
-IF !hasContextData()
+AT LINE 1185
+IF !hasContextAnnotation()
 DO
-  threadHandoverStarted($copy);
+   threadHandoverCompleted();
 ENDRULE
 
 
@@ -117,7 +127,7 @@ CLASS ^java.util.concurrent.ThreadPoolExecutor
 METHOD reject
 HELPER org.jboss.qa.jdg.messageflow.Tracer
 AT ENTRY
-IF hasContextData()
+IF hasContextAnnotation()
 DO
   discardMessages(org.jboss.qa.jdg.messageflow.MessageUnmarshaller.getDataIdentifiers($1));
   threadHandoverFailure();
@@ -183,7 +193,7 @@ HELPER org.jboss.qa.jdg.messageflow.Tracer
 AT ENTRY
 IF TRUE
 DO
-  setMarkFromLastMsgTag($0.completed);
+  setMarkFromContext($0.completed);
 ENDRULE
 
 RULE ResponseReceived

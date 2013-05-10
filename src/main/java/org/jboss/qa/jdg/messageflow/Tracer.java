@@ -45,6 +45,7 @@ public class Tracer {
 
    private static ThreadLocal<Span> contextSpan = new ThreadLocal<Span>();
    private static ThreadLocal<Object> contextAnnotation = new ThreadLocal<Object>();
+   private static ThreadLocal<String> contextMark = new ThreadLocal<String>();
 
    private static ConcurrentHashMap<Object, String> markedObjects = new ConcurrentHashMap<Object, String>();
 
@@ -96,6 +97,7 @@ public class Tracer {
             reportReferenceCounters();
             reportSpans();
             System.err.println(finishedSpans.size() + " not written finished spans.");
+            Span.debugPrintUnfinished();
          }
 
          private void reportSpans() {
@@ -125,11 +127,23 @@ public class Tracer {
       });
    }
 
+   private static class ManagedAnnotation {}
+
    /**
     * User entry into control flow
     */
    public void createManagedContext() {
-      contextAnnotation.set(new Object());
+      // destroy any pending context first
+      Span span = contextSpan.get();
+      if (span != null) {
+         span.decrementOrRetire(finishedSpans);
+         contextSpan.remove();
+      }
+      contextAnnotation.set(new ManagedAnnotation());
+   }
+
+   public boolean hasManagedContext() {
+      return contextAnnotation.get() instanceof ManagedAnnotation;
    }
 
    /**
@@ -137,8 +151,8 @@ public class Tracer {
     */
    public void destroyManagedContext() {
       Span span = contextSpan.get();
-      if (span.isThreadLocalOnly()) {
-         finishedSpans.add(span);
+      if (span != null) {
+         span.decrementOrRetire(finishedSpans);
       }
       cleanContext();
    }
@@ -147,7 +161,7 @@ public class Tracer {
       ensureSpan().addEvent(Event.Type.INCOMING_DATA, null);
    }
 
-   public void setContextData(Object annotation) {
+   public void setContextAnnotation(Object annotation) {
       contextAnnotation.set(annotation);
       incrementRefCount(annotation);
       Span span = contextSpan.get();
@@ -178,8 +192,21 @@ public class Tracer {
       if (prev != null && prev != span) {
          throw new IllegalStateException();
       }
-      span.setThreadLocalOnly(false);
+      if (span.isThreadLocalOnly()) {
+         span.setThreadLocalOnly(false);
+         span.incrementRefCount();
+         // now we have to call threadHandoverCompleted
+      }
       span.addEvent(Event.Type.THREAD_HANDOVER_STARTED, null);
+   }
+
+   /**
+    * Use only when thread-local span has been transformed into non-thread local
+    */
+   public void threadHandoverCompleted() {
+      Span span = contextSpan.get();
+      span.decrementRefCount(finishedSpans);
+      cleanContext();
    }
 
    /**
@@ -245,7 +272,7 @@ public class Tracer {
          throw new IllegalArgumentException();
       }
       Span span = ensureSpan();
-      //System.err.printf("%s assoc %08x -> %08x\n", Thread.currentThread().getName(), newAnnotation.hashCode(), span.hashCode());
+//      System.err.printf("%s assoc %08x -> %08x\n", Thread.currentThread().getName(), newAnnotation.hashCode(), span.hashCode());
       Span old = spans.putIfAbsent(newAnnotation, span);
       if (old != null) {
 //         System.err.println("Old span:");
@@ -304,8 +331,9 @@ public class Tracer {
     * The control flow has returned to the point where the thread started processing this message
     */
    public void threadProcessingComplete() {
+      Object annotation = contextAnnotation.get();
       ensureSpan().addEvent(Event.Type.THREAD_PROCESSING_COMPLETE, null);
-      decrementRefCount(contextAnnotation.get());
+      decrementRefCount(annotation);
       cleanContext();
    }
 
@@ -322,7 +350,7 @@ public class Tracer {
       Span span = contextSpan.get();
       span.addEvent(Event.Type.OUTCOMING_DATA_FINISHED, null);
       if (contextAnnotation.get() == null && span.isThreadLocalOnly()) {
-         finishedSpans.add(span);
+         span.decrementOrRetire(finishedSpans);
          contextSpan.remove();
       }
    }
@@ -355,15 +383,19 @@ public class Tracer {
    }
 
    public void stackpoint() {
-      StackTraceElement[] stackTrace = Thread.currentThread().getStackTrace();
-      StringBuilder message = new StringBuilder("STACK");
-      for (StackTraceElement ste : stackTrace) {
-         message.append(" at ").append(ste);
-      }
-      ensureSpan().addEvent(Event.Type.STACKPOINT, message.toString());
+      ensureSpan().addEvent(Event.Type.STACKPOINT, getStackTrace());
    }
 
-   public boolean hasContextData() {
+   public static String getStackTrace() {
+      StackTraceElement[] stackTrace = Thread.currentThread().getStackTrace();
+      StringBuilder text = new StringBuilder("STACK");
+      for (StackTraceElement ste : stackTrace) {
+         text.append(" at ").append(ste);
+      }
+      return text.toString();
+   }
+
+   public boolean hasContextAnnotation() {
       return contextAnnotation.get() != null;
    }
 
@@ -376,8 +408,16 @@ public class Tracer {
       }
    }
 
-   public void setMarkFromLastMsgTag(Object obj) {
-      setMark(obj, getLastMsgTag());
+   public void setContextMarkWithClass(Object o) {
+      setContextMark(o.getClass().getSimpleName());
+   }
+
+   public void setContextMark(String mark) {
+      contextMark.set(mark);
+   }
+
+   public void setMarkFromContext(Object obj) {
+      setMark(obj, contextMark.get());
    }
 
    public String getMark(Object obj) {
@@ -386,12 +426,16 @@ public class Tracer {
 
    public void removeMark(Object obj) {
       String mark = markedObjects.remove(obj);
-      System.err.println("Removed mark " + mark);
+      //System.err.println("Removed mark " + mark);
    }
 
    public String getLastMsgTag() {
       Span span = contextSpan.get();
       if (span == null) return null;
       return span.getLastMsgTag();
+   }
+
+   public void debug(String message) {
+      System.err.println(Thread.currentThread().getName() + ": " + message);
    }
 }

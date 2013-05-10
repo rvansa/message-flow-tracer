@@ -46,11 +46,28 @@ class Span {
    private boolean retransmission;
    private boolean threadLocalOnly = true;
 
+//   private static HashSet<Span> debugSpans = new HashSet<Span>();
+
+   public static void debugPrintUnfinished() {
+//      synchronized (debugSpans) {
+//         for (Span span : debugSpans) {
+//            System.err.printf("%08x = ", span.hashCode());
+//            span.writeTo(System.err);
+//         }
+//      }
+   }
+
    public Span() {
+//      synchronized (debugSpans) {
+//         debugSpans.add(this);
+//      }
       parent = null;
    }
 
    public Span(Span parent) {
+//      synchronized (debugSpans) {
+//         debugSpans.add(this);
+//      }
       this.parent = parent;
       synchronized (parent) {
          parent.children.add(this);
@@ -64,9 +81,15 @@ class Span {
       outcoming.add(identifier);
    }
 
-   public synchronized void incrementRefCount() {
-      counter++;
-      //System.err.printf("INC %08x -> %d\n", this.hashCode(), counter);
+   public void incrementRefCount() {
+      if (parent != null) {
+         parent.incrementRefCount();
+         return;
+      }
+      synchronized (this) {
+         counter++;
+         //System.err.printf("INC %08x -> %d\n", this.hashCode(), counter);
+      }
    }
 
    public void decrementRefCount(Queue<Span> finishedSpans) {
@@ -79,11 +102,38 @@ class Span {
          //System.err.printf("DEC %08x -> %d\n", this.hashCode(), counter);
          if (counter == 0) {
             passToFinished(finishedSpans);
+         } else if (counter < 0) {
+            writeWithChildren(System.err);
+            throw new IllegalStateException();
          }
       }
    }
 
+   private void writeWithChildren(PrintStream out) {
+      out.printf("%08x", this.hashCode());
+      writeTo(out);
+      out.println("<Begin children>");
+      for (Span s : children) {
+         s.writeWithChildren(out);
+      }
+      out.println("<End children>");
+   }
+
+   public void decrementOrRetire(Queue<Span> finishedSpans) {
+      if (threadLocalOnly) {
+//         synchronized (debugSpans) {
+//            debugSpans.remove(this);
+//         }
+         finishedSpans.add(this);
+      } else {
+         decrementRefCount(finishedSpans);
+      }
+   }
+
    private void passToFinished(Queue<Span> finishedSpans) {
+//      synchronized (debugSpans) {
+//         debugSpans.remove(this);
+//      }
       if (parent != null) {
          for (LocalEvent e : parent.events) {
             events.add(e);
@@ -168,12 +218,12 @@ class Span {
       return lastTag == null ? null : lastTag.text;
    }
 
-   public void setThreadLocalOnly(boolean threadLocalOnly) {
-      this.threadLocalOnly = threadLocalOnly;
+   public synchronized boolean isThreadLocalOnly() {
+      return threadLocalOnly;
    }
 
-   public boolean isThreadLocalOnly() {
-      return threadLocalOnly;
+   public void setThreadLocalOnly(boolean threadLocalOnly) {
+      this.threadLocalOnly = threadLocalOnly;
    }
 
    private static class LocalEvent {

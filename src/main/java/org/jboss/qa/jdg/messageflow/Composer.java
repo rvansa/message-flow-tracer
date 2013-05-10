@@ -233,9 +233,9 @@ public class Composer {
                   AtomicInteger prev = messageReferences.putIfAbsent(parts[i], new AtomicInteger(1));
                   if (prev != null) {
                      int refCount = prev.incrementAndGet();
-                     //System.out.println(source + " inc " + parts[i] + " -> " + refCount);
+                     // System.out.println(file + ":" + lineNumber + " inc " + parts[i] + " -> " + refCount);
                   } else {
-                     //System.out.println(source + " add " + parts[i]);
+                     // System.out.println(file + ":" + lineNumber + " add " + parts[i]);
                   }
                }
             }

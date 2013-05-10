@@ -133,7 +133,7 @@ public class AnalyseTraces implements Processor {
          if (e.type == Event.Type.THREAD_PROCESSING_COMPLETE) {
             Long start = startTimestamps.remove(nodeThread);
             if (start != null) {
-               nanoTime += e.nanoTime - timestamp;
+               nanoTime += e.nanoTime - start;
                threads++;
             }
          }
