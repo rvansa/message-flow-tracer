@@ -146,8 +146,7 @@ RULE commitTx_jbossTM_exit
 CLASS com.arjuna.ats.internal.jta.transaction.arjunacore.TransactionImple
 METHOD commitAndDisassociate
 HELPER org.jboss.qa.jdg.messageflow.Tracer
-#AT LINE 1207 - does not work either
-AT EXIT
+AT INVOKE TransactionImple.removeTransaction ALL
 IF TRUE
 DO
    destroyManagedContext();
@@ -184,15 +183,13 @@ IF TRUE
 DO
    createManagedContext();
    traceTag("ROLLBACK_TX");
-#   checkpoint("TX=" + com.arjuna.ats.internal.jta.transaction.arjunacore.TransactionImple.getTransaction());
 ENDRULE
 
 RULE rollbackTx_jbossTM_exit
 CLASS com.arjuna.ats.internal.jta.transaction.arjunacore.TransactionImple
 METHOD rollbackAndDisassociate
 HELPER org.jboss.qa.jdg.messageflow.Tracer
-#AT LINE 1267 - doesn't work either
-AT EXIT
+AT INVOKE TransactionImple.removeTransaction ALL
 IF TRUE
 DO
    destroyManagedContext();
