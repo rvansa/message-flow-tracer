@@ -46,21 +46,10 @@ public class AnalyseTraces implements Processor {
       int traces;
       int sumNodes;
 
-      int sumMessages;
-      int minMessages = Integer.MAX_VALUE;
-      int maxMessages;
-
-      int sumThreads;
-      int minThreads = Integer.MAX_VALUE;
-      int maxThreads;
-
-      long sumNanoTime;
-      long minNanoTime = Long.MAX_VALUE;
-      long maxNanoTime;
-
-      long sumWallTime;
-      long minWallTime = Long.MAX_VALUE;
-      long maxWallTime;
+      AvgMinMax messages = new AvgMinMax();
+      AvgMinMax threads = new AvgMinMax();
+      AvgMinMax nanoTime = new AvgMinMax();
+      AvgMinMax wallTime = new AvgMinMax();
 
       private TraceStats(String tag) {
          this.tag = tag;
@@ -72,7 +61,7 @@ public class AnalyseTraces implements Processor {
    }
 
    @Override
-   public void process(Trace trace) {
+   public void process(Trace trace, long traceCounter) {
       String traceTag = NO_TAG;
       for (Event event : trace.events) {
          if (event.type == Event.Type.TRACE_TAG) {
@@ -85,9 +74,7 @@ public class AnalyseTraces implements Processor {
          stats = new TraceStats(traceTag);
          traceStats.put(traceTag, stats);
       }
-      stats.minMessages = Math.min(stats.minMessages, trace.messages.size());
-      stats.maxMessages = Math.max(stats.maxMessages, trace.messages.size());
-      stats.sumMessages += trace.messages.size();
+      stats.messages.add(trace.messages.size());
       stats.traces++;
       for (String message : trace.messages) {
          TreeSet<String> msgTags = new TreeSet<String>();
@@ -147,33 +134,28 @@ public class AnalyseTraces implements Processor {
          }
       }
       stats.sumNodes += nodes.size();
-      stats.sumNanoTime += nanoTime;
-      stats.minNanoTime = Math.min(nanoTime, stats.minNanoTime);
-      stats.maxNanoTime = Math.max(nanoTime, stats.maxNanoTime);
-      long wallTime = trace.events.last().timestamp.getTime() - trace.events.first().timestamp.getTime();
-      stats.sumWallTime += wallTime;
-      stats.minWallTime = Math.min(wallTime, stats.minWallTime);
-      stats.maxWallTime = Math.max(wallTime, stats.maxWallTime);
-      stats.sumThreads += threads;
-      stats.minThreads = Math.min(threads, stats.minThreads);
-      stats.maxThreads = Math.max(threads, stats.maxThreads);
+      stats.nanoTime.add(nanoTime);
+      stats.wallTime.add(trace.events.last().timestamp.getTime() - trace.events.first().timestamp.getTime());
+      stats.threads.add(threads);
 
    }
 
    @Override
    public void finish() {
-      out.println("Traces statistics");
+      out.println("\n**********");
+      out.println("* TRACES *");
+      out.println("**********");
       for (TraceStats stats : traceStats.values()) {
-         out.printf("%s:\t%d traces, avg %1.2f msg (%d - %d)\n", stats.tag, stats.traces,
-                    (double) stats.sumMessages / stats.traces, stats.minMessages, stats.maxMessages);
+         out.printf("%s:\t%d traces, avg %.2f msg (%d - %d)\n", stats.tag, stats.traces,
+                    stats.messages.avg(), stats.messages.min(), stats.messages.max());
          for (Map.Entry<String, Integer> message : stats.msgOccurrences.entrySet()) {
             out.printf("\t%1.2fx: %s\n", (double) message.getValue() / stats.traces, message.getKey());
          }
-         out.printf("\tavg %1.2f nodes, avg %2.2f threads (%d - %d)\n", (double) stats.sumNodes / stats.traces,
-                    (double) stats.sumThreads / stats.traces, stats.minThreads, stats.maxThreads);
+         out.printf("\tavg %1.2f nodes, avg %.2f threads (%d - %d)\n", (double) stats.sumNodes / stats.traces,
+                    stats.threads.avg(), stats.threads.min(), stats.threads.max());
          out.printf("\tProcessing took avg %.2f us (%.2f - %.2f)\n",
-                    (double) stats.sumNanoTime / (stats.traces * 1000d), stats.minNanoTime / 1000d, stats.maxNanoTime / 1000d);
-         out.printf("\tWall time delta %d ms (%d - %d)\n\n",  stats.sumWallTime / stats.traces, stats.minWallTime, stats.maxWallTime);
+                    stats.nanoTime.avg() / 1000d, stats.nanoTime.min() / 1000d, stats.nanoTime.max() / 1000d);
+         out.printf("\tWall time delta %.2f ms (%d - %d)\n\n",  stats.wallTime.avg(), stats.wallTime.min(), stats.wallTime.max());
       }
    }
 }

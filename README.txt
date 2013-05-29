@@ -116,7 +116,9 @@ java -jar message-flow-tracer.jar -t /span/for/instance1.txt /span/for/instance2
 LOCKING STATISTICS
 ------------------
 
-TODO
+Here we can see how many lock attempts have been executed and how many succeeded/failed. We report the time spent waiting for the lock and time spent holding the lock.
+
+java -jar message-flow-tracer.jar -l /span/for/instance1.txt /span/for/instance2.txt ...
 
 USAGE REFERENCE
 --------------------

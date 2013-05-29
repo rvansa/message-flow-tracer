@@ -138,7 +138,7 @@ CLASS org.jgroups.protocols.UNICAST2
 METHOD up
 HELPER org.jboss.qa.jdg.messageflow.Tracer
 AT LINE 417
-IF $hdr.type != 0
+IF $hdr.type != 0 && $hdr.type != 4
 DO
   setNonCausal();
   msgTag("UNICAST2");

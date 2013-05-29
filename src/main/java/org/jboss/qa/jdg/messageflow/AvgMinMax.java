@@ -23,12 +23,34 @@
 package org.jboss.qa.jdg.messageflow;
 
 /**
- * Processes message traces (does the datamining).
- *
  * @author Radim Vansa &lt;rvansa@redhat.com&gt;
  */
-public interface Processor {
-   void init(Composer composer);
-   void process(Trace trace, long traceCounter);
-   void finish();
+public class AvgMinMax {
+   private long sum = 0;
+   private long count = 0;
+   private long min = Long.MAX_VALUE;
+   private long max = Long.MIN_VALUE;
+
+   public void add(long value) {
+      sum += value;
+      count++;
+      min = Math.min(value, min);
+      max = Math.max(value, max);
+   }
+
+   public double avg() {
+      return (double) sum / count;
+   }
+
+   public long min() {
+      return min;
+   }
+
+   public long max() {
+      return max;
+   }
+
+   public long count() {
+      return count;
+   }
 }

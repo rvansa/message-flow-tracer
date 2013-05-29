@@ -41,7 +41,6 @@ class PrintTrace implements Processor {
    private SimpleDateFormat format = new SimpleDateFormat("HH:mm:ss.SSS");
    private PrintStream out = System.out;
    private long outLine = 0;
-   private int traceCounter = 0;
 
    @Override
    public void init(Composer composer) {
@@ -62,13 +61,13 @@ class PrintTrace implements Processor {
       }
    }
 
-   public void process(Trace trace) {
+   public void process(Trace trace, long traceCounter) {
       outLine++;
       if (trace.events.size() > 500) {
          System.err.printf("Long trace %d (%d events, %d messages) on line %d\n",
                            traceCounter, trace.events.size(), trace.messages.size(), outLine);
       }
-      out.printf("TRACE %d: %d msg\n", traceCounter++, trace.messages.size());
+      out.printf("TRACE %d: %d msg\n", traceCounter, trace.messages.size());
       for (String message : trace.messages) {
          String src = null;
          ArrayList<String> dest = new ArrayList<String>();

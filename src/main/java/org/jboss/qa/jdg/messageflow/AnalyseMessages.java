@@ -161,7 +161,7 @@ public class AnalyseMessages implements Processor {
    }
 
    @Override
-   public void process(Trace trace) {
+   public void process(Trace trace, long traceCounter) {
       for (String message : trace.messages) {
          ArrayList<Event> sent = new ArrayList<Event>();
          Map<String, ArrayList<Event>> incoming = new HashMap<String, ArrayList<Event>>();
@@ -296,6 +296,9 @@ public class AnalyseMessages implements Processor {
 
    @Override
    public void finish() {
+      out.println("\n************");
+      out.println("* MESSAGES *");
+      out.println("************");
       for (TaggedStats ts1 : this.stats.values()) {
          if (ts1.merged) continue;
          for (TaggedStats ts2 : this.stats.values()) {

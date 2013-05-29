@@ -22,6 +22,7 @@
 
 package org.jboss.qa.jdg.messageflow;
 
+import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.Map;
@@ -72,6 +73,7 @@ class Event implements Comparable<Event> {
       }
    }
 
+   private static SimpleDateFormat FORMAT = new SimpleDateFormat("HH:mm:ss.SSS");
 
    public Date timestamp;
    public long nanoTime;
@@ -115,5 +117,10 @@ class Event implements Comparable<Event> {
       } else {
          return comparison;
       }
+   }
+
+   @Override
+   public String toString() {
+      return FORMAT.format(timestamp) + '|' + source + '|' + threadName + '|' + type + ' ' + text;
    }
 }

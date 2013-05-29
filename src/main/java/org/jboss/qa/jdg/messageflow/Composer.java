@@ -340,7 +340,7 @@ public class Composer {
                      trace.addEvent(e);
                      localHighestUnixTimestamp = Math.max(localHighestUnixTimestamp, e.timestamp.getTime());
                   } else {
-                     // NON-DATA
+                     // NON-CAUSAL
                      if (type.equals(Event.Type.OUTCOMING_DATA_STARTED.toString())) {
                         Trace traceForThisMessage = retrieveTraceFor(parts[4].trim());
                         Event e = new Event(nanoTime, unixTime, eventTime, source, spanCounter,
@@ -350,6 +350,8 @@ public class Composer {
                         decrementMessageRefCount(text);
                         tryRetire(traceForThisMessage);
                         checkAdvance(e.timestamp.getTime());
+                     } else if (type.equals(Event.Type.TRACE_TAG.toString())) {
+                        System.err.println(String.format("Warning: Span with trace tag (%s) marked as non-causal (%s line %d)", text, source, lineNumber));
                      }
                   }
                } else {
@@ -493,7 +495,6 @@ public class Composer {
    }
 
    private class ProcessorThread extends Thread {
-      private int tracesProcessed;
       private volatile boolean finished = false;
       private final List<Processor> processors;
 
@@ -504,6 +505,7 @@ public class Composer {
 
       @Override
       public void run() {
+         long traceCounter = 0;
          while (!finished || !finishedTraces.isEmpty()) {
             Trace trace = null;
             try {
@@ -518,11 +520,16 @@ public class Composer {
             }
             trace.reorderCausally();
             for (Processor processor : processors) {
-               processor.process(trace);
+               try {
+                  processor.process(trace, traceCounter);
+               } catch (Throwable exception) {
+                  System.err.printf("Failed to process trace %d in %s: %s\n", traceCounter, processor.getClass().getSimpleName(), exception);
+                  exception.printStackTrace(System.err);
+               }
             }
-            if (++tracesProcessed % 10000 == 0) {
+            if (++traceCounter % 10000 == 0) {
                System.err.printf("Processed %d traces, %d/%d messages\n",
-                                 tracesProcessed, totalMessages - messageReferences.size(), totalMessages);
+                                 traceCounter, totalMessages - messageReferences.size(), totalMessages);
                if (reportMemoryUsage) {
                   Composer.reportMemoryUsage();
                }

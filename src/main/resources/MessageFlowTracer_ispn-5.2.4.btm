@@ -76,6 +76,16 @@ DO
    traceTag("BEGIN_TX");
 ENDRULE
 
+RULE beginTx_exit
+INTERFACE ^javax.transaction.TransactionManager
+METHOD begin
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT EXIT
+IF TRUE
+DO
+   destroyManagedContext();
+ENDRULE
+
 RULE beginTx_jbossTM
 CLASS ^com.arjuna.ats.internal.jta.transaction.arjunacore.BaseTransaction
 METHOD begin
@@ -87,15 +97,15 @@ DO
    traceTag("BEGIN_TX");
 ENDRULE
 
-#RULE beginTx_jbossTM_end
-#CLASS ^com.arjuna.ats.internal.jta.transaction.arjunacore.BaseTransaction
-#METHOD begin
-#HELPER org.jboss.qa.jdg.messageflow.Tracer
-#AT EXIT
-#IF TRUE
-#DO
-#   checkpoint("TX=" + com.arjuna.ats.internal.jta.transaction.arjunacore.TransactionImple.getTransaction());
-#ENDRULE
+RULE beginTx_jbossTM_exit
+CLASS ^com.arjuna.ats.internal.jta.transaction.arjunacore.BaseTransaction
+METHOD begin
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT EXIT
+IF TRUE
+DO
+   destroyManagedContext();
+ENDRULE
 
 RULE commitTx
 INTERFACE ^javax.transaction.TransactionManager
@@ -107,6 +117,18 @@ DO
    createManagedContext();
    traceTag("COMMIT_TX");
 ENDRULE
+
+# not working when commit fails with exception
+RULE commitTx_exit
+INTERFACE ^javax.transaction.TransactionManager
+METHOD commit
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT EXIT
+IF TRUE
+DO
+   destroyManagedContext();
+ENDRULE
+
 
 RULE commitTx_jbossTM
 CLASS com.arjuna.ats.internal.jta.transaction.arjunacore.BaseTransaction
@@ -124,7 +146,8 @@ RULE commitTx_jbossTM_exit
 CLASS com.arjuna.ats.internal.jta.transaction.arjunacore.TransactionImple
 METHOD commitAndDisassociate
 HELPER org.jboss.qa.jdg.messageflow.Tracer
-AT LINE 1207
+#AT LINE 1207 - does not work either
+AT EXIT
 IF TRUE
 DO
    destroyManagedContext();
@@ -142,6 +165,16 @@ DO
    traceTag("ROLLBACK_TX");
 ENDRULE
 
+RULE rollbackTx_exit
+INTERFACE ^javax.transaction.TransactionManager
+METHOD rollback
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT EXIT
+IF TRUE
+DO
+   destroyManagedContext();
+ENDRULE
+
 RULE rollbackTx_jbossTM
 CLASS com.arjuna.ats.internal.jta.transaction.arjunacore.BaseTransaction
 METHOD rollback
@@ -152,6 +185,17 @@ DO
    createManagedContext();
    traceTag("ROLLBACK_TX");
 #   checkpoint("TX=" + com.arjuna.ats.internal.jta.transaction.arjunacore.TransactionImple.getTransaction());
+ENDRULE
+
+RULE rollbackTx_jbossTM_exit
+CLASS com.arjuna.ats.internal.jta.transaction.arjunacore.TransactionImple
+METHOD rollbackAndDisassociate
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+#AT LINE 1267 - doesn't work either
+AT EXIT
+IF TRUE
+DO
+   destroyManagedContext();
 ENDRULE
 
 RULE lock
@@ -204,7 +248,7 @@ AT ENTRY
 IF TRUE
 DO
 #  checkpoint("UNLOCK_ALL");
-  checkpoint("UNLOCK_ALL" + $1.getLockedKeys());
+  checkpoint("UNLOCK_ALL " + $1.getLockedKeys());
 ENDRULE
 
 RULE submitCallable

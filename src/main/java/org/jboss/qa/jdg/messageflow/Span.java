@@ -43,7 +43,7 @@ class Span {
    private List<Span> children = new ArrayList<Span>();
 
    private int counter = 1;
-   private boolean retransmission;
+   private boolean nonCausal;
    private boolean threadLocalOnly = true;
 
 //   private static HashSet<Span> debugSpans = new HashSet<Span>();
@@ -151,8 +151,15 @@ class Span {
          //System.err.printf("%08x finished\n", this.hashCode());
          finishedSpans.add(this);
       } else {
+         boolean causalChildren = false;
          for (Span child : children) {
+            if (!child.isNonCausal()) {
+               causalChildren = true;
+            }
             child.passToFinished(finishedSpans);
+         }
+         if (!causalChildren) {
+            finishedSpans.add(this);
          }
       }
    }
@@ -162,11 +169,11 @@ class Span {
    }
 
    public void setNonCausal(boolean retransmission) {
-      this.retransmission = retransmission;
+      this.nonCausal = retransmission;
    }
 
-   public boolean isRetransmission() {
-      return retransmission;
+   public boolean isNonCausal() {
+      return nonCausal;
    }
 
    public void setIncoming(String incoming) {
@@ -177,7 +184,7 @@ class Span {
    }
 
    public synchronized void writeTo(PrintStream stream) {
-      if (isRetransmission()) {
+      if (isNonCausal()) {
          stream.print(Trace.NON_CAUSAL);
       } else {
          stream.print(Trace.SPAN);
@@ -208,6 +215,7 @@ class Span {
       return parent;
    }
 
+   /* Debugging only */
    public String getLastMsgTag() {
       LocalEvent lastTag = null;
       for (LocalEvent event : events) {
@@ -217,6 +225,17 @@ class Span {
       }
       return lastTag == null ? null : lastTag.text;
    }
+
+   /* Debugging only */
+   public String getTraceTag() {
+      for (LocalEvent event : events) {
+         if (event.type == Event.Type.TRACE_TAG) {
+            return event.text;
+         }
+      }
+      return "-no-trace-tag-";
+   }
+
 
    public synchronized boolean isThreadLocalOnly() {
       return threadLocalOnly;
