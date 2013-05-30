@@ -109,8 +109,8 @@ class Span {
       }
    }
 
-   private void writeWithChildren(PrintStream out) {
-      out.printf("%08x", this.hashCode());
+   void writeWithChildren(PrintStream out) {
+      out.printf("%08x (parent %08x)", this.hashCode(), this.parent == null ? 0 : this.parent.hashCode());
       writeTo(out);
       out.println("<Begin children>");
       for (Span s : children) {

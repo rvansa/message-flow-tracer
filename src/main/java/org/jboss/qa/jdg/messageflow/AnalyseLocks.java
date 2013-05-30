@@ -123,7 +123,7 @@ public class AnalyseLocks implements Processor {
          lockingTraces.add(finished.size());
       }
       if (!lockings.isEmpty()) {
-         throw new IllegalStateException();
+         throw new IllegalStateException("Not unlocked: " + lockings.keySet());
       }
    }
 

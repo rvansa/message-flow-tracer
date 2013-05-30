@@ -1,4 +1,4 @@
-RULE putInternalEntry
+RULE putInternal_entry
 CLASS org.infinispan.CacheImpl
 METHOD putInternal
 HELPER org.jboss.qa.jdg.messageflow.Tracer
@@ -10,7 +10,7 @@ DO
   traceTag("PUT");
 ENDRULE
 
-RULE putInternalExit
+RULE putInternal_exit
 CLASS org.infinispan.CacheImpl
 METHOD putInternal
 HELPER org.jboss.qa.jdg.messageflow.Tracer
@@ -21,7 +21,29 @@ DO
   destroyManagedContext();
 ENDRULE
 
-RULE removeInternalEntry
+RULE putAllInternal_entry
+CLASS org.infinispan.CacheImpl
+METHOD putAllInternal
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT ENTRY
+IF TRUE
+DO
+  createManagedContext();
+  traceTag("PUT_ALL");
+ENDRULE
+
+RULE putAllInternal_exit
+CLASS org.infinispan.CacheImpl
+METHOD putAllInternal
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT EXIT
+IF TRUE
+DO
+  checkpoint("PUT_ALL_exit");
+  destroyManagedContext();
+ENDRULE
+
+RULE removeInternal_entry
 CLASS org.infinispan.CacheImpl
 METHOD removeInternal
 HELPER org.jboss.qa.jdg.messageflow.Tracer
@@ -32,7 +54,7 @@ DO
   traceTag("REMOVE");
 ENDRULE
 
-RULE removeInternalExit
+RULE removeInternal_exit
 CLASS org.infinispan.CacheImpl
 METHOD removeInternal
 HELPER org.jboss.qa.jdg.messageflow.Tracer
@@ -43,7 +65,7 @@ DO
   destroyManagedContext();
 ENDRULE
 
-RULE getEntry
+RULE get_entry
 CLASS org.infinispan.CacheImpl
 METHOD get(java.lang.Object)
 HELPER org.jboss.qa.jdg.messageflow.Tracer
@@ -54,7 +76,7 @@ DO
   traceTag("GET");
 ENDRULE
 
-RULE getExit
+RULE get_exit
 CLASS org.infinispan.CacheImpl
 METHOD get(java.lang.Object)
 HELPER org.jboss.qa.jdg.messageflow.Tracer
@@ -65,7 +87,29 @@ DO
   destroyManagedContext();
 ENDRULE
 
-RULE beginTx
+RULE getAsync_entry
+CLASS org.infinispan.CacheImpl
+METHOD getAsync(java.lang.Object)
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT ENTRY
+IF TRUE
+DO
+  createManagedContext();
+  traceTag("GET_ASYNC");
+ENDRULE
+
+RULE getAsync_exit
+CLASS org.infinispan.CacheImpl
+METHOD getAsync(java.lang.Object)
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT EXIT
+IF TRUE
+DO
+  checkpoint("GET_ASYNC_exit");
+  destroyManagedContext();
+ENDRULE
+
+RULE beginTx_entry
 INTERFACE ^javax.transaction.TransactionManager
 METHOD begin
 HELPER org.jboss.qa.jdg.messageflow.Tracer
@@ -86,7 +130,7 @@ DO
    destroyManagedContext();
 ENDRULE
 
-RULE beginTx_jbossTM
+RULE beginTx_jbossTM_entry
 CLASS ^com.arjuna.ats.internal.jta.transaction.arjunacore.BaseTransaction
 METHOD begin
 HELPER org.jboss.qa.jdg.messageflow.Tracer
@@ -107,7 +151,7 @@ DO
    destroyManagedContext();
 ENDRULE
 
-RULE commitTx
+RULE commitTx_entry
 INTERFACE ^javax.transaction.TransactionManager
 METHOD commit
 HELPER org.jboss.qa.jdg.messageflow.Tracer
@@ -129,8 +173,7 @@ DO
    destroyManagedContext();
 ENDRULE
 
-
-RULE commitTx_jbossTM
+RULE commitTx_jbossTM_entry
 CLASS com.arjuna.ats.internal.jta.transaction.arjunacore.BaseTransaction
 METHOD commit
 HELPER org.jboss.qa.jdg.messageflow.Tracer
@@ -139,7 +182,6 @@ IF TRUE
 DO
    createManagedContext();
    traceTag("COMMIT_TX");
-#   checkpoint("TX=" + com.arjuna.ats.internal.jta.transaction.arjunacore.TransactionImple.getTransaction());
 ENDRULE
 
 RULE commitTx_jbossTM_exit
@@ -152,8 +194,7 @@ DO
    destroyManagedContext();
 ENDRULE
 
-
-RULE rollbackTx
+RULE rollbackTx_entry
 INTERFACE ^javax.transaction.TransactionManager
 METHOD rollback
 HELPER org.jboss.qa.jdg.messageflow.Tracer
@@ -174,7 +215,7 @@ DO
    destroyManagedContext();
 ENDRULE
 
-RULE rollbackTx_jbossTM
+RULE rollbackTx_jbossTM_entry
 CLASS com.arjuna.ats.internal.jta.transaction.arjunacore.BaseTransaction
 METHOD rollback
 HELPER org.jboss.qa.jdg.messageflow.Tracer
@@ -192,6 +233,17 @@ HELPER org.jboss.qa.jdg.messageflow.Tracer
 AT INVOKE TransactionImple.removeTransaction ALL
 IF TRUE
 DO
+   destroyManagedContext();
+ENDRULE
+
+RULE exceptionThrown
+CLASS org.infinispan.CacheImpl
+METHOD executeCommandAndCommitIfNeeded
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT THROW ALL
+IF TRUE
+DO
+   checkpoint("Throwing " + $^);
    destroyManagedContext();
 ENDRULE
 
@@ -248,31 +300,52 @@ DO
   checkpoint("UNLOCK_ALL " + $1.getLockedKeys());
 ENDRULE
 
-RULE submitCallable
-INTERFACE java.util.concurrent.AbstractExecutorService
+RULE submittingCallable
+CLASS java.util.concurrent.AbstractExecutorService
 METHOD submit(java.util.concurrent.Callable)
 HELPER org.jboss.qa.jdg.messageflow.Tracer
 AT ENTRY
-IF hasContextData()
+IF hasContextAnnotation()
 DO
   associateData($1);
   threadHandoverStarted($1);
 ENDRULE
 
+RULE submittingCallableUnknownSource
+INTERFACE java.util.concurrent.AbstractExecutorService
+METHOD submit(java.util.concurrent.Callable)
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT ENTRY
+IF !hasContextAnnotation()
+DO
+  stackpoint();
+  threadHandoverStarted($1);
+ENDRULE
+
+RULE submittedCallableUnknownSource
+INTERFACE java.util.concurrent.AbstractExecutorService
+METHOD submit(java.util.concurrent.Callable)
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT ENTRY
+IF !hasContextAnnotation()
+DO
+  threadHandoverCompleted();
+ENDRULE
+
 RULE executeCallableEntry
 INTERFACE ^java.util.concurrent.Callable
-METHOD run
+METHOD call
 HELPER org.jboss.qa.jdg.messageflow.Tracer
 AT ENTRY
 IF TRUE
 DO
   threadHandoverSuccess($0);
-  checkpoint("Callable");
+  checkpoint("Callable " + $0);
 ENDRULE
 
 RULE executeCallableExit
 INTERFACE ^java.util.concurrent.Callable
-METHOD run
+METHOD call
 HELPER org.jboss.qa.jdg.messageflow.Tracer
 AT EXIT
 IF TRUE

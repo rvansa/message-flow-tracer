@@ -92,6 +92,7 @@ public class Tracer {
                try {
                   Tracer.class.wait();
                } catch (InterruptedException e) {
+                  System.err.println("Waiting for writer interrupted.");
                }
             }
             reportReferenceCounters();
@@ -104,7 +105,8 @@ public class Tracer {
             System.err.println(spans.size() + " unfinished spans");
             int counter = 0;
             for (Map.Entry<Object, Span> entry : spans.entrySet()) {
-               System.out.printf("%08x (refcount=%s) -> ", entry.getKey().hashCode(), referenceCounters.get(entry.getKey()));
+               System.out.printf("%s:%08x (refcount=%s) -> ", entry.getKey().getClass().getName(),
+                                 entry.getKey().hashCode(), referenceCounters.get(entry.getKey()));
                entry.getValue().writeTo(System.out);
                if (++counter > 500) break; // shutdown hook must execute quickly
             }
@@ -117,7 +119,8 @@ public class Tracer {
             System.err.println(referenceCounters.size() + " not cleaned reference counters");
             int counter = 0;
             for (Map.Entry<Object, AtomicInteger> entry : referenceCounters.entrySet()) {
-               System.out.printf("%08x -> %d\n", entry.getKey().hashCode(), entry.getValue().get());
+               System.out.printf("%s:%08x -> %d\n",  entry.getKey().getClass().getName(),
+                                 entry.getKey().hashCode(), entry.getValue().get());
                if (++counter > 500) break; // shutdown hook must execute quickly
             }
             if (counter > 500) {
@@ -198,6 +201,7 @@ public class Tracer {
          // now we have to call threadHandoverCompleted
       }
       span.addEvent(Event.Type.THREAD_HANDOVER_STARTED, null);
+      //span.addEvent(Event.Type.THREAD_HANDOVER_STARTED, String.format("%s:%08x", annotation.getClass().getName(), annotation.hashCode()));
    }
 
    /**
@@ -222,9 +226,10 @@ public class Tracer {
       ensureSpan().addEvent(Event.Type.THREAD_HANDOVER_SUCCESS, null);
    }
 
-   public void threadHandoverFailure() {
+   public void threadHandoverFailure(Object annotation) {
       ensureSpan().addEvent(Event.Type.THREAD_HANDOVER_FAILURE, null);
-      decrementRefCount(contextAnnotation.get());
+      //ensureSpan().addEvent(Event.Type.THREAD_HANDOVER_FAILURE, String.format("%s:%08x", annotation.getClass().getName(), annotation.hashCode()));
+      decrementRefCount(annotation);
    }
 
    public void messageHandlingStarted(String messageId) {
@@ -251,9 +256,18 @@ public class Tracer {
    public void messageHandlingFinished() {
       Span current = contextSpan.get();
       contextSpan.set(current.getParent());
-      //System.err.printf("%s finish %08x %08x -> %08x\n", Thread.currentThread().getName(), contextAnnotation.get().hashCode(), current.hashCode(), current.parent.hashCode());
+      //System.err.printf("%s finish %08x %08x -> %08x\n", Thread.currentThread().getName(), contextAnnotation.get().hashCode(), current.hashCode(), current.getParent().hashCode());
       if (!spans.replace(contextAnnotation.get(), current, current.getParent())) {
-         throw new IllegalStateException();
+//         System.err.println("Expected:");
+//         current.writeWithChildren(System.err);
+//         Span actual = spans.get(contextAnnotation.get());
+//         if (actual != null) {
+//            System.err.println("Actual:");
+//            actual.writeWithChildren(System.err);
+//         } else {
+//            System.err.println("Actual is null");
+//         }
+         throw new IllegalStateException(String.format("For annotation %08x is expected different span", contextAnnotation.get().hashCode()));
       }
    }
 
@@ -272,7 +286,7 @@ public class Tracer {
          throw new IllegalArgumentException();
       }
       Span span = ensureSpan();
-//      System.err.printf("%s assoc %08x -> %08x\n", Thread.currentThread().getName(), newAnnotation.hashCode(), span.hashCode());
+      //System.err.printf("%s assoc %08x -> %08x\n", Thread.currentThread().getName(), newAnnotation.hashCode(), span.hashCode());
       Span old = spans.putIfAbsent(newAnnotation, span);
       if (old != null) {
 //         System.err.println("Old span:");
@@ -304,17 +318,23 @@ public class Tracer {
       AtomicInteger refCount = referenceCounters.putIfAbsent(annotation, new AtomicInteger(1));
       if (refCount != null) {
          int count = refCount.incrementAndGet();
-         //System.err.printf("%08x inc to %d in %s\n", annotation.hashCode(), count, Thread.currentThread().getName());
+//         System.err.printf("%s:%08x inc to %d in %s\n", annotation.getClass().getName(), annotation.hashCode(),
+//                           count, Thread.currentThread().getName());
+      } else {
+//         System.err.printf("%s:%08x set to 1 in %s\n", annotation.getClass().getName(), annotation.hashCode(),
+//                           Thread.currentThread().getName());
       }
    }
 
    private void decrementRefCount(Object annotation) {
       AtomicInteger refCount = referenceCounters.get(annotation);
       if (refCount == null) {
-         throw new IllegalStateException();
+         throw new IllegalStateException(String.format("No refcount for %s:%08x", annotation.getClass().getName(), annotation.hashCode()));
       }
-      //System.out.printf("%08x refcount = %d in %s\n", annotation.hashCode(), refCount.get(), Thread.currentThread().getName());
-      if (refCount.decrementAndGet() == 0) {
+      int count = refCount.decrementAndGet();
+//      System.out.printf("%s:%08x dec to %d in %s\n", annotation.getClass().getName(), annotation.hashCode(),
+//                        count, Thread.currentThread().getName());
+      if (count == 0) {
          //System.out.printf("%08x removing refcount in %s\n", annotation.hashCode(), Thread.currentThread().getName());
          referenceCounters.remove(annotation);
          Span span = spans.remove(annotation);
@@ -332,6 +352,9 @@ public class Tracer {
     */
    public void threadProcessingComplete() {
       Object annotation = contextAnnotation.get();
+      if (annotation == null) {
+         return;
+      }
       ensureSpan().addEvent(Event.Type.THREAD_PROCESSING_COMPLETE, null);
       decrementRefCount(annotation);
       cleanContext();
@@ -438,4 +461,5 @@ public class Tracer {
    public void debug(String message) {
       System.err.println(Thread.currentThread().getName() + ": " + message);
    }
+
 }

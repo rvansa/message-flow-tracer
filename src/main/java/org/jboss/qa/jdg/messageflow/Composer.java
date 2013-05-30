@@ -48,6 +48,7 @@ public class Composer {
    // in second pass it is only read and when the counter reaches zero for all messages in the trace
    // the trace is ready to be written to file
    private ConcurrentMap<String, AtomicInteger> messageReferences = new ConcurrentHashMap<String, AtomicInteger>();
+   private AtomicInteger messagesRead = new AtomicInteger(0);
 
    private ConcurrentMap<String, Trace> traces = new ConcurrentHashMap<String, Trace>();
 
@@ -236,6 +237,10 @@ public class Composer {
                      // System.out.println(file + ":" + lineNumber + " inc " + parts[i] + " -> " + refCount);
                   } else {
                      // System.out.println(file + ":" + lineNumber + " add " + parts[i]);
+                  }
+                  int read = messagesRead.incrementAndGet();
+                  if (read % 1000000 == 0) {
+                     System.err.printf("Read %d message references (~%d messages)\n", read, messageReferences.size());
                   }
                }
             }
@@ -487,7 +492,11 @@ public class Composer {
    }
 
    private void decrementMessageRefCount(String message) {
-      int refCount = messageReferences.get(message).decrementAndGet();
+      AtomicInteger counter = messageReferences.get(message);
+      if (counter == null) {
+         throw new IllegalStateException("No message counter for " + message);
+      }
+      int refCount = counter.decrementAndGet();
       if (refCount == 0) {
          messageReferences.remove(message);
       }

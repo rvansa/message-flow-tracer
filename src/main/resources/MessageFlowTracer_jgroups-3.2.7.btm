@@ -12,11 +12,11 @@ RULE dispatchData
 CLASS org.jgroups.protocols.TP
 METHOD dispatchToThreadPool
 HELPER org.jboss.qa.jdg.messageflow.Tracer
-AT LINE 1310
+AT INVOKE Executor.execute 2
 IF TRUE
 DO
-  setContextAnnotation($tmp);
-  threadHandoverStarted($tmp);
+  setContextAnnotation($@[1]);
+  threadHandoverStarted($@[1]);
 ENDRULE
 
 RULE dataDispatched
@@ -36,7 +36,7 @@ HELPER org.jboss.qa.jdg.messageflow.Tracer
 AT ENTRY
 IF TRUE
 DO
-  threadHandoverSuccess($0.buf);
+  threadHandoverSuccess($0);
 ENDRULE
 
 
@@ -74,42 +74,41 @@ RULE loopbackCopyDispatching
 CLASS org.jgroups.protocols.TP
 METHOD down
 HELPER org.jboss.qa.jdg.messageflow.Tracer
-AT LINE 1178
+AT INVOKE Executor.execute ALL
 IF hasContextAnnotation()
 DO
-  associateData($copy);
-  threadHandoverStarted($copy);
+  associateData($@[1]);
+  threadHandoverStarted($@[1]);
 ENDRULE
 
 RULE loopbackCopyDispatchingUnknownSource
 CLASS org.jgroups.protocols.TP
 METHOD down
 HELPER org.jboss.qa.jdg.messageflow.Tracer
-AT LINE 1178
+AT INVOKE Executor.execute ALL
 IF !hasContextAnnotation()
 DO
-  threadHandoverStarted($copy);
+  threadHandoverStarted($@[1]);
 ENDRULE
 
 RULE loopbackCopyDispatchedUnknownSource
 CLASS org.jgroups.protocols.TP
 METHOD down
 HELPER org.jboss.qa.jdg.messageflow.Tracer
-AT LINE 1185
+AFTER INVOKE Executor.execute ALL
 IF !hasContextAnnotation()
 DO
    threadHandoverCompleted();
 ENDRULE
 
-
 RULE loopbackCopyProcessing
 CLASS org.jgroups.protocols.TP$4
 METHOD run
 HELPER org.jboss.qa.jdg.messageflow.Tracer
-AT LINE 1181
+AT ENTRY
 IF TRUE
 DO
-  threadHandoverSuccess($0.val$copy);
+  threadHandoverSuccess($0);
 ENDRULE
 
 RULE loopbackCopyComplete
@@ -122,7 +121,7 @@ DO
   threadProcessingComplete();
 ENDRULE
 
-RULE messageRejectedTPE
+RULE taskRejected
 CLASS ^java.util.concurrent.ThreadPoolExecutor
 METHOD reject
 HELPER org.jboss.qa.jdg.messageflow.Tracer
@@ -130,7 +129,7 @@ AT ENTRY
 IF hasContextAnnotation()
 DO
   discardMessages(org.jboss.qa.jdg.messageflow.MessageUnmarshaller.getDataIdentifiers($1));
-  threadHandoverFailure();
+  threadHandoverFailure(org.jboss.qa.jdg.messageflow.Unwrapper.possiblyUnwrapCallable($1));
 ENDRULE
 
 RULE unicastNonCausal
