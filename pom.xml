@@ -29,7 +29,7 @@
             <configuration>
                <archive>
                   <manifest>
-                     <mainClass>org.jboss.qa.jdg.messageflow.Composer</mainClass>
+                     <mainClass>org.jboss.qa.jdg.messageflow.Main</mainClass>
                      <packageName>org.jboss.qa.jdg.messageflow</packageName>
                   </manifest>
                </archive>

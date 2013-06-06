@@ -340,7 +340,6 @@ AT ENTRY
 IF TRUE
 DO
   threadHandoverSuccess($0);
-  checkpoint("Callable " + $0);
 ENDRULE
 
 RULE executeCallableExit

@@ -20,12 +20,12 @@
  * 02110-1301 USA, or see the FSF site: http://www.fsf.org.
  */
 
-package org.jboss.qa.jdg.messageflow;
+package org.jboss.qa.jdg.messageflow.processors;
 
 /**
  * @author Radim Vansa &lt;rvansa@redhat.com&gt;
  */
-public class AvgMinMax {
+class AvgMinMax {
    private long sum = 0;
    private long count = 0;
    private long min = Long.MAX_VALUE;

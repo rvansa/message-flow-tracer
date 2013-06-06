@@ -20,9 +20,10 @@
  * 02110-1301 USA, or see the FSF site: http://www.fsf.org.
  */
 
-package org.jboss.qa.jdg.messageflow;
+package org.jboss.qa.jdg.messageflow.objects;
 
 import java.text.SimpleDateFormat;
+import java.util.Comparator;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.Map;
@@ -30,7 +31,7 @@ import java.util.Map;
 /**
 * @author Radim Vansa &lt;rvansa@redhat.com&gt;
 */
-class Event implements Comparable<Event> {
+public class Event {
    public enum Type {
       INCOMING_DATA("Incoming"),
       THREAD_HANDOVER_STARTED("THStarted"),
@@ -83,7 +84,8 @@ class Event implements Comparable<Event> {
    public String threadName;
    public Type type;
    public String text;
-   public DagVertex causalOrder = null;
+   //public DagVertex causalOrder = null;
+   public long correctedTimestamp = 0;
 
    public Event(long originNanoTime, long originUnixTime, long nanoTime, String source, int span, String threadName, String type, String text) {
       this.type = Type.get(type);
@@ -96,31 +98,29 @@ class Event implements Comparable<Event> {
       this.text = text;//fromDictionary(message);
    }
 
-   @Override
-   public int compareTo(Event e) {
-      int comparison;
-      if (causalOrder != null && e.causalOrder != null) {
-         comparison = causalOrder.compareTo(e.causalOrder);
-         if (comparison != 0) return comparison;
+   public static class GlobalTimestampComparator implements Comparator<Event> {
+      @Override
+      public int compare(Event o1, Event o2) {
+         return o1.timestamp.compareTo(o2.timestamp);
       }
-      if (source == e.source) {
-         comparison = Long.compare(nanoTime, e.nanoTime);
-      } else {
-         comparison = timestamp.compareTo(e.timestamp);
-         if (comparison == 0) {
-            // force transitive comparisons if recomputed times are equal
-            comparison = Long.compare(roundingError, e.roundingError);
-         }
+   }
+
+   public static class LocalTimestampComparator implements Comparator<Event> {
+      @Override
+      public int compare(Event o1, Event o2) {
+         return Long.compare(o1.nanoTime, o2.nanoTime);
       }
-      if (comparison == 0) {
-         return Integer.compare(this.hashCode(), e.hashCode());
-      } else {
-         return comparison;
+   }
+
+   public static class CorrectedTimestampComparator implements Comparator<Event> {
+      @Override
+      public int compare(Event o1, Event o2) {
+         return Long.compare(o1.correctedTimestamp, o2.correctedTimestamp);
       }
    }
 
    @Override
    public String toString() {
-      return FORMAT.format(timestamp) + '|' + source + '|' + threadName + '|' + type + ' ' + text;
+      return String.format("%s|%s|%s|%s|%s", FORMAT.format(timestamp), source, threadName, type, text);
    }
 }

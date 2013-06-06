@@ -20,13 +20,16 @@
  * 02110-1301 USA, or see the FSF site: http://www.fsf.org.
  */
 
-package org.jboss.qa.jdg.messageflow;
+package org.jboss.qa.jdg.messageflow.processors;
 
 import java.io.PrintStream;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+
+import org.jboss.qa.jdg.messageflow.objects.Event;
+import org.jboss.qa.jdg.messageflow.objects.Trace;
 
 /**
  * @author Radim Vansa &lt;rvansa@redhat.com&gt;
@@ -49,10 +52,6 @@ public class AnalyseLocks implements Processor {
       Event lockOk;
       Event lockFail;
       Event unlock;
-   }
-
-   @Override
-   public void init(Composer composer) {
    }
 
    @Override

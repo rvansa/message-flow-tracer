@@ -20,7 +20,7 @@
  * 02110-1301 USA, or see the FSF site: http://www.fsf.org.
  */
 
-package org.jboss.qa.jdg.messageflow;
+package org.jboss.qa.jdg.messageflow.processors;
 
 import java.io.PrintStream;
 import java.util.ArrayList;
@@ -28,6 +28,9 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.TreeMap;
+
+import org.jboss.qa.jdg.messageflow.objects.Event;
+import org.jboss.qa.jdg.messageflow.objects.Trace;
 
 /**
  * @author Radim Vansa &lt;rvansa@redhat.com&gt;
@@ -154,10 +157,6 @@ public class AnalyseMessages implements Processor {
          Average average = (Average) o;
          return count == average.count && sum == average.sum;
       }
-   }
-
-   @Override
-   public void init(Composer composer) {
    }
 
    @Override

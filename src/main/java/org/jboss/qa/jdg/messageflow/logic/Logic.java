@@ -20,48 +20,31 @@
  * 02110-1301 USA, or see the FSF site: http://www.fsf.org.
  */
 
-package org.jboss.qa.jdg.messageflow;
+package org.jboss.qa.jdg.messageflow.logic;
 
-import java.util.HashSet;
-import java.util.Set;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * @author Radim Vansa &lt;rvansa@redhat.com&gt;
  */
-class DagVertex implements Comparable<DagVertex> {
-   private Set<DagVertex> up = new HashSet<DagVertex>();
+public abstract class Logic implements Runnable {
 
-   public DagVertex() {
+   protected List<String> inputFiles = new ArrayList<String>();
+
+   public void addInputFile(String file) {
+      inputFiles.add(file);
    }
 
-   public DagVertex(DagVertex previous) {
-      up.add(previous);
-   }
-
-   public int compareTo(DagVertex o, boolean other) {
-      if (this == o) return 0;
-      Set<DagVertex> gen = new HashSet<DagVertex>(up);
-      Set<DagVertex> nextGen = new HashSet<DagVertex>();
-      while (nextGen.isEmpty()) {
-         if (gen.contains(o)) return 1;
-         for (DagVertex v : gen) {
-            nextGen.addAll(v.up);
+   protected boolean joinAll(Thread[] threads) {
+      for (int i = 0; i < threads.length; ++i) {
+         try {
+            threads[i].join();
+         } catch (InterruptedException e) {
+            System.err.println("Interrupted!");
+            return false;
          }
-         gen = nextGen;
       }
-      if (other) {
-         return 0;
-      } else {
-         return -o.compareTo(this, true);
-      }
-   }
-
-   @Override
-   public int compareTo(DagVertex o) {
-      return compareTo(o, false);
-   }
-
-   public void addUp(DagVertex vertex) {
-      up.add(vertex);
+      return true;
    }
 }

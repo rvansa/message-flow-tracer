@@ -122,12 +122,14 @@ java -jar message-flow-tracer.jar -l /span/for/instance1.txt /span/for/instance2
 
 USAGE REFERENCE
 --------------------
-Usage  [-r] [-p|-m|-l|-t|-a] [-o trace_log] span_logs...
--r    Report memory usage
--p    Print log of traces
--m    Analyze messages
--l    Analyze locks
--t    Analyze traces
--a    Prints log of traces and runs all available analyses
--o    Trace log output file
+Usage  [-r] [([-m] [-l] [-t] | -a)] [-p trace_log] [-c dir message] span_logs...
+-r                Report memory usage
+-p file           Print log of traces to the file
+-z                The ordering of events in trace log should be based only on timestamps (not causally)
+-m                Analyze messages
+-l                Analyze locks
+-t                Analyze traces
+-a                Prints log of traces and runs all available analyses
+-c dir message    Write spans participating on trace with the message to the dir
+-d milliseconds   Maximum difference between highest processed timestamp in second-pass threads
 

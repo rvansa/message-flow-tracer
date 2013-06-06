@@ -20,29 +20,30 @@
  * 02110-1301 USA, or see the FSF site: http://www.fsf.org.
  */
 
-package org.jboss.qa.jdg.messageflow;
+package org.jboss.qa.jdg.messageflow.logic;
 
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileReader;
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLongArray;
 
+import org.jboss.qa.jdg.messageflow.objects.Event;
+import org.jboss.qa.jdg.messageflow.objects.Trace;
+import org.jboss.qa.jdg.messageflow.processors.Processor;
+
 /**
  * Merges multiple spans from several nodes into trace
  *
  * @author Radim Vansa &lt;rvansa@redhat.com&gt;
  */
-public class Composer {
-   private static final long MAX_ADVANCE_MILIS = 10000;
+public class Composer extends Logic {
 
    // this map is populated in first pass and should contain the number of references to each message
    // in second pass it is only read and when the counter reaches zero for all messages in the trace
@@ -55,71 +56,16 @@ public class Composer {
    private LinkedBlockingQueue<Trace> finishedTraces = new LinkedBlockingQueue<Trace>(1000);
    private AtomicLongArray highestUnixTimestamps;
 
-   private List<String> inputFiles = new ArrayList<String>();
-   private String traceLogFile;
-   private Set<Class<? extends Processor>> processorClasses = new HashSet<Class<? extends Processor>>();
+   private List<Processor> processors = new ArrayList<Processor>();
    private boolean reportMemoryUsage = false;
    private int totalMessages;
-
+   private boolean sortCausally = true;
+   private long maxAdvanceMillis = 10000;
 
    public Composer() {
    }
 
-   public static void main(String[] args) {
-      Composer composer = new Composer();
-      int i;
-      for (i = 0; i < args.length; ++i) {
-         if (args[i].equals("-o")) {
-            if (i + 1 >= args.length) {
-               printUsage();
-               return;
-            } else {
-               composer.setTraceLogFile(args[i + 1]);
-               ++i;
-            }
-         } else if (args[i].equals("-r")) {
-            composer.setReportMemoryUsage(true);
-         } else if (args[i].equals("-p")) {
-            composer.processorClasses.add(PrintTrace.class);
-         } else if (args[i].equals("-m")) {
-            composer.processorClasses.add(AnalyseMessages.class);
-         } else if (args[i].equals("-l")) {
-            composer.processorClasses.add(AnalyseLocks.class);
-         } else if (args[i].equals("-t")) {
-            composer.processorClasses.add(AnalyseTraces.class);
-         } else if (args[i].equals("-a")) {
-            composer.processorClasses.add(PrintTrace.class);
-            composer.processorClasses.add(AnalyseMessages.class);
-            composer.processorClasses.add(AnalyseLocks.class);
-            composer.processorClasses.add(AnalyseTraces.class);
-         } else if (args[i].startsWith("-")) {
-            System.err.println("Unknown option " + args[i]);
-            printUsage();
-            return;
-         } else {
-            break;
-         }
-      }
-      if (composer.processorClasses.isEmpty()) {
-         composer.processorClasses.add(PrintTrace.class);
-      }
-      for (; i < args.length; ++i) {
-         composer.inputFiles.add(args[i]);
-      }
-      composer.run();
-   }
-
-   private static void printUsage() {
-      System.err.println("Usage  [-r] [-p|-m|-l|-t|-a] [-o trace_log] span_logs...");
-      System.err.println("\t-r\tReport memory usage");
-      System.err.println("\t-p\tPrint log of traces");
-      System.err.println("\t-m\tAnalyze messages");
-      System.err.println("\t-l\tAnalyze locks");
-      System.err.println("\t-t\tAnalyze traces");
-      System.err.println("\t-a\tPrints log of traces and runs all available analyses");
-      System.err.println("\t-o\tTrace log output file");
-   }
-
+   @Override
    public void run() {
       System.err.println("Starting first pass");
       Thread[] threads = new Thread[inputFiles.size()];
@@ -143,10 +89,6 @@ public class Composer {
          threads[i] = t;
          t.start();
       }
-      List<Processor> processors = new ArrayList(processorClasses.size());
-      for (Class<? extends Processor> clazz : processorClasses) {
-         processors.add(getProcessor(clazz));
-      }
       ProcessorThread processorThread = new ProcessorThread(processors);
       processorThread.start();
       joinAll(threads);
@@ -158,30 +100,6 @@ public class Composer {
                         messageReferences.size(), traces.size());
    }
 
-   private Processor getProcessor(Class<? extends Processor> clazz) {
-      try {
-         Processor processor = clazz.newInstance();
-         processor.init(this);
-         return processor;
-      } catch (Exception e) {
-         System.err.println("Cannot instantiate processor: " + e);
-         System.exit(1);
-         return null;
-      }
-   }
-
-   private boolean joinAll(Thread[] threads) {
-      for (int i = 0; i < threads.length; ++i) {
-         try {
-            threads[i].join();
-         } catch (InterruptedException e) {
-            System.err.println("Interrupted!");
-            return false;
-         }
-      }
-      return true;
-   }
-
    private static void reportMemoryUsage() {
       //System.gc();
       long used = (Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()) / (1024 * 1024);
@@ -189,18 +107,32 @@ public class Composer {
       System.err.printf("Using %d/%d MB of memory\n", used, max);
    }
 
-   public void setTraceLogFile(String traceLogFile) {
-      if (!traceLogFile.equals("-")) {
-         this.traceLogFile = traceLogFile;
-      }
-   }
-
-   public String getTraceLogFile() {
-      return traceLogFile;
-   }
-
    public void setReportMemoryUsage(boolean reportMemoryUsage) {
       this.reportMemoryUsage = reportMemoryUsage;
+   }
+
+   public void addProcessor(Processor processor) {
+      processors.add(processor);
+   }
+
+   public List<Processor> getProcessors() {
+      return processors;
+   }
+
+   public void addInputFile(String file) {
+      inputFiles.add(file);
+   }
+
+   public boolean isSortCausally() {
+      return sortCausally;
+   }
+
+   public void setSortCausally(boolean sortCausally) {
+      this.sortCausally = sortCausally;
+   }
+
+   public void setMaxAdvanceMillis(long maxAdvanceMillis) {
+      this.maxAdvanceMillis = maxAdvanceMillis;
    }
 
    private class FirstPassThread extends Thread {
@@ -368,6 +300,8 @@ public class Composer {
             }
          }
          tryRetire(trace);
+         // as we have finished reading, nobody should be blocked by our old timestamp
+         highestUnixTimestamps.set(selfIndex, Long.MAX_VALUE);
       }
 
       private void checkAdvance(long eventUnixTimestamp) {
@@ -379,7 +313,7 @@ public class Composer {
                for (int i = 0; i < highestUnixTimestamps.length(); ++i) {
                   min = Math.min(highestUnixTimestamps.get(i), min);
                }
-               if (highestUnixTimestamp > min + MAX_ADVANCE_MILIS) {
+               if (highestUnixTimestamp > min + maxAdvanceMillis) {
                   try {
                      Thread.sleep(1000);
                   } catch (InterruptedException e1) {
@@ -441,54 +375,63 @@ public class Composer {
       }
 
       private Trace retrieveTraceFor(String message) {
-         Trace mf = traces.get(message);
-         if (mf == null) {
-            mf = new Trace();
-            mf.addMessage(message);
-            Trace prev = traces.putIfAbsent(message, mf);
+         Trace trace = traces.get(message);
+         if (trace == null) {
+            trace = new Trace();
+            trace.addMessage(message);
+            Trace prev = traces.putIfAbsent(message, trace);
             if (prev != null) {
-               mf = prev;
+               trace = prev;
             }
          }
          for (;;) {
-            mf.lock.lock();
-            Trace mfFromMap = traces.get(message);
-            if (mfFromMap == null) {
+            trace.lock.lock();
+            Trace traceFromMap = traces.get(message);
+            if (traceFromMap == null) {
                // removal from the map happens only when the trace is retired, therefore, no more
                // references for the message are alive
-               mf.lock.unlock();
+               trace.lock.unlock();
                throw new IllegalStateException();
             }
-            if (mfFromMap != mf) {
-               mf.lock.unlock();
-               mf = mfFromMap;
+            if (traceFromMap != trace) {
+               trace.lock.unlock();
+               trace = traceFromMap;
             } else {
                break;
             }
          }
-         return mf;
+         return trace;
       }
 
-      private void tryRetire(Trace mf) {
-         if (mf == null) return;
+      private void tryRetire(Trace trace) {
+         if (trace == null) return;
          try {
-            if (mf.mergeCounter > 0) return;
-            for (String message : mf.messages) {
+            if (trace.mergeCounter > 0) return;
+            for (String message : trace.messages) {
                if (messageReferences.get(message) != null) {
                   return;
                }
             }
-            for (String message : mf.messages) {
+            for (String message : trace.messages) {
                traces.remove(message);
             }
-            mf.retired = true;
-            finishedTraces.put(mf);
+            trace.retired = true;
+            retireTrace(trace);
          } catch (InterruptedException e) {
             System.err.println("Interrupted when adding to queue!");
          } finally {
-            mf.lock.unlock();
+            trace.lock.unlock();
          }
       }
+   }
+
+   private void retireTrace(Trace trace) throws InterruptedException {
+      if (sortCausally) {
+         trace.sortCausally();
+      } else {
+         trace.sortByTimestamps();
+      }
+      finishedTraces.put(trace);
    }
 
    private void decrementMessageRefCount(String message) {
@@ -527,7 +470,6 @@ public class Composer {
                System.err.println("Printer interrupted!");
                break;
             }
-            trace.reorderCausally();
             for (Processor processor : processors) {
                try {
                   processor.process(trace, traceCounter);

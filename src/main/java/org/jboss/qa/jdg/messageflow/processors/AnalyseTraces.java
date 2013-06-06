@@ -20,7 +20,7 @@
  * 02110-1301 USA, or see the FSF site: http://www.fsf.org.
  */
 
-package org.jboss.qa.jdg.messageflow;
+package org.jboss.qa.jdg.messageflow.processors;
 
 import java.io.PrintStream;
 import java.util.HashMap;
@@ -30,6 +30,9 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
+
+import org.jboss.qa.jdg.messageflow.objects.Event;
+import org.jboss.qa.jdg.messageflow.objects.Trace;
 
 /**
  * @author Radim Vansa &lt;rvansa@redhat.com&gt;
@@ -54,10 +57,6 @@ public class AnalyseTraces implements Processor {
       private TraceStats(String tag) {
          this.tag = tag;
       }
-   }
-
-   @Override
-   public void init(Composer composer) {
    }
 
    @Override
@@ -135,7 +134,7 @@ public class AnalyseTraces implements Processor {
       }
       stats.sumNodes += nodes.size();
       stats.nanoTime.add(nanoTime);
-      stats.wallTime.add(trace.events.last().timestamp.getTime() - trace.events.first().timestamp.getTime());
+      stats.wallTime.add(trace.events.get(trace.events.size() - 1).timestamp.getTime() - trace.events.get(0).timestamp.getTime());
       stats.threads.add(threads);
 
    }

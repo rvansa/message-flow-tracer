@@ -20,7 +20,7 @@
  * 02110-1301 USA, or see the FSF site: http://www.fsf.org.
  */
 
-package org.jboss.qa.jdg.messageflow;
+package org.jboss.qa.jdg.messageflow.processors;
 
 import java.io.BufferedOutputStream;
 import java.io.FileNotFoundException;
@@ -31,28 +31,29 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
-import java.util.TreeMap;
 import java.util.TreeSet;
+
+import org.jboss.qa.jdg.messageflow.objects.Event;
+import org.jboss.qa.jdg.messageflow.objects.Trace;
 
 /**
 * @author Radim Vansa &lt;rvansa@redhat.com&gt;
 */
-class PrintTrace implements Processor {
+public class PrintTrace implements Processor {
    private SimpleDateFormat format = new SimpleDateFormat("HH:mm:ss.SSS");
    private PrintStream out = System.out;
    private long outLine = 0;
 
-   @Override
-   public void init(Composer composer) {
-      String outputFile = composer.getTraceLogFile();
-      if (outputFile != null) {
-         try {
-            out = new PrintStream(new BufferedOutputStream(new FileOutputStream(outputFile)));
-         } catch (FileNotFoundException e) {
-            System.err.println("Could not write to " + outputFile + " due to " + e);
-         }
+   public PrintTrace(String outputFile) {
+      if (outputFile.trim().equals("-")) return;
+      try {
+         out = new PrintStream(new BufferedOutputStream(new FileOutputStream(outputFile)));
+      } catch (FileNotFoundException e) {
+         System.err.println("Could not write to " + outputFile + " due to " + e);
       }
    }
+
+   public PrintTrace() {}
 
    @Override
    public void finish() {
@@ -88,31 +89,33 @@ class PrintTrace implements Processor {
          }
          outLine++;
       }
+      if (trace.negativeCycles > 0) {
+         out.printf("%d causal inconsistencies detected\n", trace.negativeCycles);
+         outLine++;
+      }
 
       int longestThreadName = 0;
       long highestGlobalDelta = 0;
-      long highestLocalDelta = 0;
-      Map<String, Long> localEvents = new HashMap<String, Long>();
       Event prevEvent = null;
       Set<String> participants = new TreeSet<String>();
+      Map<String, Event> lastSpanEvents = new HashMap<String, Event>();
       for (Event event : trace.events) {
          longestThreadName = Math.max(longestThreadName, event.threadName.length());
-         participants.add(event.source + "|" + event.threadName);
+         String sourceThread = event.source + "|" + event.threadName;
+         participants.add(sourceThread);
+         lastSpanEvents.put(sourceThread + "|" + event.span, event);
 
          long globalDelta = prevEvent == null ? 0 : event.timestamp.getTime() - prevEvent.timestamp.getTime();
-         highestGlobalDelta = Math.max(highestGlobalDelta, globalDelta);
+         // if global delta is < 0, we multiply it with -10 in order to account the minus sign
+         highestGlobalDelta = Math.max(highestGlobalDelta, globalDelta > 0 ? globalDelta : -10 * globalDelta);
          prevEvent = event;
-      }
-      Map<String, Integer> partPos = new TreeMap<String, Integer>();
-      int posCounter = 0;
-      for (String participant : participants) {
-         partPos.put(participant, posCounter++);
       }
       int globalDeltaWidth = highestGlobalDelta <= 0 ? 1 : (int) Math.log10(highestGlobalDelta) + 1;
       String globalDeltaFormatString = String.format("|%%%dd ms", globalDeltaWidth);
 
       prevEvent = null;
-      localEvents.clear();
+      Map<String, Long> localEvents = new HashMap<String, Long>();
+      Map<String, Event> lastSourceThreadEvents = new HashMap<String, Event>();
       for (Event event : trace.events) {
          outLine++;
          out.print(format.format(event.timestamp));
@@ -132,10 +135,20 @@ class PrintTrace implements Processor {
          }
          localEvents.put(event.source, event.nanoTime);
          /* Control flow graph */
-         int myPos = partPos.get(event.source + "|" + event.threadName);
-         for (int i = 0; i < myPos; ++i) out.print(' ');
-         out.print('*');
-         for (int i = myPos + 1; i < partPos.size(); ++i) out.print(' ');
+         String sourceThread = event.source + "|" + event.threadName;
+         for (String st : participants) {
+            if (st.equals(sourceThread)) {
+               out.print('*');
+            } else {
+               Event lastSourceThreadEvent = lastSourceThreadEvents.get(st);
+               if (lastSourceThreadEvent == null || lastSourceThreadEvent == lastSpanEvents.get(st + "|" + lastSourceThreadEvent.span)) {
+                  out.print(' ');
+               } else {
+                  out.print('.');
+               }
+            }
+         }
+         lastSourceThreadEvents.put(sourceThread, event);
         /* Data */
          out.print('|');
          out.print(event.source);

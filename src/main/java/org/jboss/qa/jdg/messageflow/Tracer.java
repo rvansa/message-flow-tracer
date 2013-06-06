@@ -32,6 +32,9 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import org.jboss.qa.jdg.messageflow.objects.Event;
+import org.jboss.qa.jdg.messageflow.objects.Span;
+
 /**
  * This class should track the execution path from the external request
  * (such as Cache.put() call) on one node, tracking the requests into Spans.

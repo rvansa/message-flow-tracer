@@ -20,7 +20,9 @@
  * 02110-1301 USA, or see the FSF site: http://www.fsf.org.
  */
 
-package org.jboss.qa.jdg.messageflow;
+package org.jboss.qa.jdg.messageflow.processors;
+
+import org.jboss.qa.jdg.messageflow.objects.Trace;
 
 /**
  * Processes message traces (does the datamining).
@@ -28,7 +30,6 @@ package org.jboss.qa.jdg.messageflow;
  * @author Radim Vansa &lt;rvansa@redhat.com&gt;
  */
 public interface Processor {
-   void init(Composer composer);
    void process(Trace trace, long traceCounter);
    void finish();
 }

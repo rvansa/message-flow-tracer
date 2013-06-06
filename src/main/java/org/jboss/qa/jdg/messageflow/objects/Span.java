@@ -20,7 +20,7 @@
  * 02110-1301 USA, or see the FSF site: http://www.fsf.org.
  */
 
-package org.jboss.qa.jdg.messageflow;
+package org.jboss.qa.jdg.messageflow.objects;
 
 import java.io.PrintStream;
 import java.util.ArrayList;
@@ -35,7 +35,7 @@ import java.util.Set;
 *
 * @author Radim Vansa &lt;rvansa@redhat.com&gt;
 */
-class Span {
+public class Span {
    private final Span parent;
    private String incoming;
    private Set<String> outcoming;
