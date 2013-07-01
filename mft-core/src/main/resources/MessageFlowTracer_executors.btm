@@ -1,0 +1,50 @@
+RULE submitRunnable
+CLASS ^java.util.concurrent.ThreadPoolExecutor
+METHOD execute
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT ENTRY
+IF TRUE
+DO
+  threadHandoverStarted($1);
+ENDRULE
+
+RULE submittedRunnableUnknownSource
+CLASS ^java.util.concurrent.ThreadPoolExecutor
+METHOD execute
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT ENTRY
+IF TRUE
+DO
+  threadHandoverCompleted();
+ENDRULE
+
+RULE runRunnableEntry
+INTERFACE ^java.lang.Runnable
+METHOD run
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT ENTRY
+BIND runnable : java.lang.Runnable = $0
+IF TRUE
+DO
+  threadHandoverSuccess(runnable);
+ENDRULE
+
+RULE runRunnableExit
+INTERFACE ^java.lang.Runnable
+METHOD run
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT EXIT
+IF TRUE
+DO
+  threadProcessingCompleted();
+ENDRULE
+
+RULE taskRejected
+CLASS ^java.util.concurrent.ThreadPoolExecutor
+METHOD reject
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT INVOKE java.util.concurrent.RejectedExecutionHandler.rejectedExecution
+IF TRUE
+DO
+  threadHandoverFailure($1);
+ENDRULE
