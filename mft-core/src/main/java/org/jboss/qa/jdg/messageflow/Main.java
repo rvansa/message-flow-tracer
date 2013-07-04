@@ -24,6 +24,7 @@ package org.jboss.qa.jdg.messageflow;
 
 import org.jboss.qa.jdg.messageflow.logic.Composer;
 import org.jboss.qa.jdg.messageflow.logic.Logic;
+import org.jboss.qa.jdg.messageflow.processors.AnalyseInterceptors;
 import org.jboss.qa.jdg.messageflow.processors.AnalyseLocks;
 import org.jboss.qa.jdg.messageflow.processors.AnalyseMessages;
 import org.jboss.qa.jdg.messageflow.processors.AnalyseTraces;
@@ -56,10 +57,13 @@ public class Main {
             composer.addProcessor(new AnalyseLocks());
          } else if (args[i].equals("-t")) {
             composer.addProcessor(new AnalyseTraces());
+         } else if (args[i].equals("-i")) {
+            composer.addProcessor(new AnalyseInterceptors());
          } else if (args[i].equals("-a")) {
             composer.addProcessor(new AnalyseMessages());
             composer.addProcessor(new AnalyseLocks());
             composer.addProcessor(new AnalyseTraces());
+            composer.addProcessor(new AnalyseInterceptors());
          } else if (args[i].equals("-z")) {
             composer.setSortCausally(false);
          } else if (args[i].equals("-c")) {
@@ -99,6 +103,7 @@ public class Main {
       System.err.println("\t-m             \tAnalyze messages");
       System.err.println("\t-l             \tAnalyze locks");
       System.err.println("\t-t             \tAnalyze traces");
+      System.err.println("\t-i             \tAnalyze interceptors");
       System.err.println("\t-a             \tPrints log of traces and runs all available analyses");
       System.err.println("\t-c dir message \tWrite spans participating on trace with the message to the dir");
       System.err.println("\t-d milliseconds\tMaximum difference between highest processed timestamp in second-pass threads");

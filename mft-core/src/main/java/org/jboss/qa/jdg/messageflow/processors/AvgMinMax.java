@@ -53,4 +53,11 @@ class AvgMinMax {
    public long count() {
       return count;
    }
+
+   public void add(AvgMinMax other) {
+      sum += other.sum;
+      count += other.count;
+      min = Math.min(min, other.min);
+      max = Math.max(max, other.max);
+   }
 }

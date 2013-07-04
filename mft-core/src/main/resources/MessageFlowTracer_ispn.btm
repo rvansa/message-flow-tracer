@@ -247,6 +247,10 @@ DO
    destroyManagedContext();
 ENDRULE
 
+###########
+# Locking #
+###########
+
 RULE lock
 CLASS org.infinispan.util.concurrent.locks.LockManagerImpl
 METHOD lockAndRecord
@@ -328,4 +332,48 @@ AT ENTRY
 IF TRUE
 DO
   msgTagWithClass($0);
+ENDRULE
+
+################
+# Interceptors #
+################
+
+RULE invokeFirstInterceptorEntry
+CLASS org.infinispan.interceptors.InterceptorChain
+METHOD invoke
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT ENTRY
+IF TRUE
+DO
+  checkpoint("INT " + simpleName($2) + "@>@" + simpleName($0.firstInChain));
+ENDRULE
+
+RULE invokeFirstInterceptorExit
+CLASS org.infinispan.interceptors.InterceptorChain
+METHOD invoke
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT EXIT
+IF TRUE
+DO
+  checkpoint("INT " + simpleName($2) + "@<@" + simpleName($0.firstInChain));
+ENDRULE
+
+RULE invokeNextInterceptorEntry
+CLASS org.infinispan.interceptors.base.CommandInterceptor
+METHOD invokeNextInterceptor
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT ENTRY
+IF TRUE
+DO
+  checkpoint("INT " + simpleName($2) + "@>@" + simpleName($0.next));
+ENDRULE
+
+RULE invokeNextInterceptorExit
+CLASS org.infinispan.interceptors.base.CommandInterceptor
+METHOD invokeNextInterceptor
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT EXIT
+IF TRUE
+DO
+  checkpoint("INT " + simpleName($2) + "@<@" + simpleName($0.next));
 ENDRULE

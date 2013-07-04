@@ -22,10 +22,6 @@
 
 package org.jboss.qa.jdg.messageflow.logic;
 
-import org.jboss.qa.jdg.messageflow.objects.Event;
-import org.jboss.qa.jdg.messageflow.objects.Trace;
-import org.jboss.qa.jdg.messageflow.processors.Processor;
-
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileReader;
@@ -37,6 +33,10 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLongArray;
+
+import org.jboss.qa.jdg.messageflow.objects.Event;
+import org.jboss.qa.jdg.messageflow.objects.Trace;
+import org.jboss.qa.jdg.messageflow.processors.Processor;
 
 /**
  * Merges multiple spans from several nodes into trace
@@ -95,6 +95,10 @@ public class Composer extends Logic {
       processorThread.finish();
       while (!finishedTraces.isEmpty()) {
          Thread.yield();
+      }
+      try {
+         processorThread.join();
+      } catch (InterruptedException e) {
       }
       System.err.printf("Memory:\n\tmessage references: %d\n\ttraces: %d\n",
                         messageReferences.size(), traces.size());

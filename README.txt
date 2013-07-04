@@ -120,6 +120,11 @@ Here we can see how many lock attempts have been executed and how many succeeded
 
 java -jar message-flow-tracer.jar -l /span/for/instance1.txt /span/for/instance2.txt ...
 
+INTERCEPTOR STATISTICS
+----------------------
+
+Shows how long took calling of each interceptor.
+
 USAGE REFERENCE
 --------------------
 Usage  [-r] [([-m] [-l] [-t] | -a)] [-p trace_log] [-c dir message] span_logs...
@@ -129,6 +134,7 @@ Usage  [-r] [([-m] [-l] [-t] | -a)] [-p trace_log] [-c dir message] span_logs...
 -m                Analyze messages
 -l                Analyze locks
 -t                Analyze traces
+-i                Analyze interceptors
 -a                Prints log of traces and runs all available analyses
 -c dir message    Write spans participating on trace with the message to the dir
 -d milliseconds   Maximum difference between highest processed timestamp in second-pass threads
