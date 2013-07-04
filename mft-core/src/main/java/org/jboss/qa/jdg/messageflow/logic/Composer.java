@@ -22,9 +22,6 @@
 
 package org.jboss.qa.jdg.messageflow.logic;
 
-import java.io.BufferedReader;
-import java.io.File;
-import java.io.FileReader;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
@@ -68,10 +65,10 @@ public class Composer extends Logic {
    @Override
    public void run() {
       System.err.println("Starting first pass");
-      Thread[] threads = new Thread[inputFiles.size()];
-      for (int i = 0; i < inputFiles.size(); ++i) {
-         Thread t = new FirstPassThread(inputFiles.get(i));
-         t.setName("First pass: " + inputFiles.get(i));
+      Thread[] threads = new Thread[inputs.size()];
+      for (int i = 0; i < inputs.size(); ++i) {
+         Thread t = new FirstPassThread(inputs.get(i));
+         t.setName("First pass: " + inputs.get(i));
          threads[i] = t;
          t.start();
       }
@@ -82,10 +79,10 @@ public class Composer extends Logic {
          reportMemoryUsage();
       }
       System.err.println("Starting second pass");
-      highestUnixTimestamps = new AtomicLongArray(inputFiles.size());
-      for (int i = 0; i < inputFiles.size(); ++i) {
-         Thread t = new SecondPassThread(inputFiles.get(i), i);
-         t.setName("Second pass: " + inputFiles.get(i));
+      highestUnixTimestamps = new AtomicLongArray(inputs.size());
+      for (int i = 0; i < inputs.size(); ++i) {
+         Thread t = new SecondPassThread(inputs.get(i), i);
+         t.setName("Second pass: " + inputs.get(i));
          threads[i] = t;
          t.start();
       }
@@ -123,10 +120,6 @@ public class Composer extends Logic {
       return processors;
    }
 
-   public void addInputFile(String file) {
-      inputFiles.add(file);
-   }
-
    public boolean isSortCausally() {
       return sortCausally;
    }
@@ -140,29 +133,30 @@ public class Composer extends Logic {
    }
 
    private class FirstPassThread extends Thread {
-      private String file;
+      private Input input;
 
-      private FirstPassThread(String file) {
-         this.file = file;
+      private FirstPassThread(Input input) {
+         this.input = input;
       }
 
       @Override
       public void run() {
          try {
             read();
-            System.err.println("Finished reading (first pass) " + file);
+            System.err.println("Finished reading (first pass) " + input);
          } catch (IOException e) {
-            System.err.println("Error reading " + file + " due to " + e);
+            System.err.println("Error reading " + input + " due to " + e);
             e.printStackTrace();
             System.exit(1);
          }
       }
 
       private void read() throws IOException {
-         BufferedReader reader = new BufferedReader(new FileReader(file));
+         input.open();
 
-         String line = reader.readLine(); // timestamp info - ignored
-         while ((line = reader.readLine()) != null) {
+         String line;
+         input.readLine(); // timestamp info - ignored
+         while ((line = input.readLine()) != null) {
             if (line.startsWith(Trace.SPAN) || line.startsWith(Trace.NON_CAUSAL)) {
                String[] parts = line.split(";");
                for (int i = line.startsWith(Trace.NON_CAUSAL) ? 2 : 1; i < parts.length; ++i) {
@@ -170,9 +164,9 @@ public class Composer extends Logic {
                   AtomicInteger prev = messageReferences.putIfAbsent(parts[i], new AtomicInteger(1));
                   if (prev != null) {
                      int refCount = prev.incrementAndGet();
-                     // System.out.println(file + ":" + lineNumber + " inc " + parts[i] + " -> " + refCount);
+                     // System.out.println(input + ":" + lineNumber + " inc " + parts[i] + " -> " + refCount);
                   } else {
-                     // System.out.println(file + ":" + lineNumber + " add " + parts[i]);
+                     // System.out.println(input + ":" + lineNumber + " add " + parts[i]);
                   }
                   int read = messagesRead.incrementAndGet();
                   if (read % 1000000 == 0) {
@@ -185,12 +179,12 @@ public class Composer extends Logic {
    }
 
    private class SecondPassThread extends Thread {
-      private String file;
+      private Input input;
       private int selfIndex;
       private long highestUnixTimestamp = 0;
 
-      public SecondPassThread(String file, int selfIndex) {
-         this.file = file;
+      public SecondPassThread(Input input, int selfIndex) {
+         this.input = input;
          this.selfIndex = selfIndex;
       }
 
@@ -198,21 +192,21 @@ public class Composer extends Logic {
       public void run() {
          try {
             read();
-            System.err.println("Finished reading (second pass) " + file);
+            System.err.println("Finished reading (second pass) " + input);
          } catch (IOException e) {
-            System.err.println("Error reading " + file + " due to " + e);
+            System.err.println("Error reading " + input + " due to " + e);
             e.printStackTrace();
             System.exit(1);
          }
       }
 
       public void read() throws IOException {
-         String source = new File(file).getName();
+         String source = input.shortName();
          source = source.substring(0, source.lastIndexOf('.') < 0 ? source.length() : source.lastIndexOf('.'));
 
-         BufferedReader reader = new BufferedReader(new FileReader(file));
+         input.open();
 
-         String timeSync = reader.readLine();
+         String timeSync = input.readLine();
          if (timeSync == null) {
             System.err.println("Empty file!");
             return;
@@ -226,7 +220,7 @@ public class Composer extends Logic {
          int lineNumber = 1;
          int spanCounter = 0;
          String line;
-         while ((line = reader.readLine()) != null) {
+         while ((line = input.readLine()) != null) {
             try {
                lineNumber++;
                String[] parts = line.split(";");

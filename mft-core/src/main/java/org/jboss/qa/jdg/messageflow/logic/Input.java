@@ -22,29 +22,14 @@
 
 package org.jboss.qa.jdg.messageflow.logic;
 
-import java.util.ArrayList;
-import java.util.List;
+import java.io.Closeable;
+import java.io.IOException;
 
 /**
  * @author Radim Vansa &lt;rvansa@redhat.com&gt;
  */
-public abstract class Logic implements Runnable {
-
-   protected List<Input> inputs = new ArrayList<Input>();
-
-   public void addInput(Input file) {
-      inputs.add(file);
-   }
-
-   protected boolean joinAll(Thread[] threads) {
-      for (int i = 0; i < threads.length; ++i) {
-         try {
-            threads[i].join();
-         } catch (InterruptedException e) {
-            System.err.println("Interrupted!");
-            return false;
-         }
-      }
-      return true;
-   }
+public interface Input extends Closeable {
+   void open() throws IOException;
+   String readLine() throws IOException;
+   String shortName();
 }

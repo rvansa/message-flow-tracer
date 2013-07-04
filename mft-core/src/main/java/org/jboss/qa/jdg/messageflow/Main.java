@@ -23,6 +23,8 @@
 package org.jboss.qa.jdg.messageflow;
 
 import org.jboss.qa.jdg.messageflow.logic.Composer;
+import org.jboss.qa.jdg.messageflow.logic.Input;
+import org.jboss.qa.jdg.messageflow.logic.InputFactory;
 import org.jboss.qa.jdg.messageflow.logic.Logic;
 import org.jboss.qa.jdg.messageflow.processors.AnalyseInterceptors;
 import org.jboss.qa.jdg.messageflow.processors.AnalyseLocks;
@@ -90,7 +92,8 @@ public class Main {
          composer.addProcessor(new PrintTrace());
       }
       for (; i < args.length; ++i) {
-         logic.addInputFile(args[i]);
+         for (Input input : InputFactory.create(args[i]))
+         logic.addInput(input);
       }
       logic.run();
    }

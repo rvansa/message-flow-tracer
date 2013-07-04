@@ -22,29 +22,49 @@
 
 package org.jboss.qa.jdg.messageflow.logic;
 
-import java.util.ArrayList;
-import java.util.List;
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileReader;
+import java.io.IOException;
 
 /**
  * @author Radim Vansa &lt;rvansa@redhat.com&gt;
  */
-public abstract class Logic implements Runnable {
+public class FileInput implements Input {
+   private String filename;
+   private BufferedReader reader;
 
-   protected List<Input> inputs = new ArrayList<Input>();
-
-   public void addInput(Input file) {
-      inputs.add(file);
+   public FileInput(String filename) {
+      this.filename = filename;
    }
 
-   protected boolean joinAll(Thread[] threads) {
-      for (int i = 0; i < threads.length; ++i) {
-         try {
-            threads[i].join();
-         } catch (InterruptedException e) {
-            System.err.println("Interrupted!");
-            return false;
-         }
+   @Override
+   public void open() throws IOException {
+      if (reader != null) close();
+      reader = new BufferedReader(new FileReader(filename));
+   }
+
+   @Override
+   public String readLine() throws IOException {
+      return reader.readLine();
+   }
+
+   @Override
+   public String shortName() {
+      return new File(filename).getName();
+   }
+
+   @Override
+   public void close() throws IOException {
+      try {
+         reader.close();
+      } finally {
+         reader = null;
       }
-      return true;
+   }
+
+   @Override
+   public String toString() {
+      return new File(filename).getAbsolutePath();
    }
 }
