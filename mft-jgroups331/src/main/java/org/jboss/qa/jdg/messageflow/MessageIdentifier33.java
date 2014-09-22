@@ -33,7 +33,7 @@ import org.jgroups.util.MessageBatch;
 /**
 * @author Radim Vansa &lt;rvansa@redhat.com&gt;
 */
-public class MessageIdentifier33 extends MessageIdentifier32 {
+public class MessageIdentifier33 extends org.jboss.qa.jdg.messageflow.MessageIdentifier32 {
 
    public static List<String> getDataIdentifiers(Runnable r) {
       try {
@@ -48,7 +48,7 @@ public class MessageIdentifier33 extends MessageIdentifier32 {
       } catch (NoSuchFieldException e) {
          e.printStackTrace();
       }
-      return MessageIdentifier32.getDataIdentifiers(r);
+      return org.jboss.qa.jdg.messageflow.MessageIdentifier32.getDataIdentifiers(r);
    }
 
    public static List<String> identifyBatchHandler(Runnable r, Class<?> clazz) throws NoSuchFieldException, IllegalAccessException {

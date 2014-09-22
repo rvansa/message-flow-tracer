@@ -23,10 +23,7 @@
 package org.jboss.qa.jdg.messageflow.processors;
 
 import java.io.PrintStream;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 
 import org.jboss.qa.jdg.messageflow.objects.Event;
 import org.jboss.qa.jdg.messageflow.objects.Trace;
@@ -47,14 +44,23 @@ public class AnalyseLocks implements Processor {
    private AvgMinMax failAcquireTime = new AvgMinMax();
    private AvgMinMax lockHeldTime = new AvgMinMax();
 
+    //private Map<String, Locking> lockings = new HashMap<String, Locking>();
+
+    private List<Trace> traces = new ArrayList<Trace>();
    private static class Locking {
       Event lockAttempt;
       Event lockOk;
       Event lockFail;
       Event unlock;
    }
+   private String inspectedKey = "";
 
    @Override
+   /*public void process(Trace trace, long traceCounter){
+        traces.add(trace);
+   }
+   */
+
    public void process(Trace trace, long traceCounter) {
       Map<String, Locking> lockings = new HashMap<String, Locking>();
       Set<Locking> finished = new HashSet<Locking>();
@@ -65,9 +71,12 @@ public class AnalyseLocks implements Processor {
          if (e.text.startsWith("LOCK ")) {
             String key = getLockKey(e);
             Locking locking = lockings.get(key);
-            if (locking != null) throw new IllegalStateException();
+            if (locking != null) throw new IllegalStateException("The key already exists in lockings. key: " + key  + " time: " + e.nanoTime);
             locking = new Locking();
             lockings.put(key, locking);
+            if (key.equals(inspectedKey)){
+                System.out.println("Putting key into lockings key: " + key + " timestamp:" + e.nanoTime + " corrected timestamp: " + e.correctedTimestamp);
+            }
             locking.lockAttempt = e;
          } else if (e.text.startsWith("LOCK_OK") || e.text.startsWith("LOCK_FAIL")) {
             for (int j = i - 1; j >= 0; --j) {
@@ -76,12 +85,15 @@ public class AnalyseLocks implements Processor {
                      && other.text != null && other.text.startsWith("LOCK ")) {
                   String key = getLockKey(other);
                   Locking locking = lockings.get(key);
-                  if (locking == null) throw new IllegalStateException();
+                  if (locking == null) throw new IllegalStateException("The key does not exists in lockings. key: " + key);
                   if (e.text.startsWith("LOCK_OK")) {
                      locking.lockOk = e;
                   } else {
                      locking.lockFail = e;
                      lockings.remove(key);
+                      if (key.equals(inspectedKey)){
+                          System.out.println("Removing key from lockings key (LOCK FAILED): " + key + " timestamp:" + e.nanoTime + " corrected timestamp: " + e.correctedTimestamp);
+                      }
                      finished.add(locking);
                   }
                   break;
@@ -91,15 +103,18 @@ public class AnalyseLocks implements Processor {
             int openBracket = e.text.indexOf('[');
             int closeBracket = e.text.indexOf(']');
             if (openBracket < 0 || closeBracket < 0 || openBracket >= closeBracket) {
-               throw new IllegalStateException();
+               throw new IllegalStateException("brackets don't match");
             }
             if (openBracket + 1 == closeBracket) continue;
 
             String keys = e.text.substring(openBracket + 1, closeBracket);
             for (String key : keys.split(",")) {
                Locking locking = lockings.remove(key.trim());
+                if (key.equals(inspectedKey)){
+                    System.out.println("Removing key from lockings key (UNLOCK): " + key + " timestamp:" + e.nanoTime + " corrected timestamp: " + e.correctedTimestamp);
+                }
                if (locking == null) {
-                  throw new IllegalStateException(keys + ": " + key);
+                  throw new IllegalStateException("Trying to unlock: The key isn't in the lockings " + key + " time: " + e.nanoTime);
                }
                locking.unlock = e;
                finished.add(locking);
@@ -122,8 +137,10 @@ public class AnalyseLocks implements Processor {
          lockingTraces.add(finished.size());
       }
       if (!lockings.isEmpty()) {
-         throw new IllegalStateException("Not unlocked: " + lockings.keySet());
+         //throw new IllegalStateException("Not unlocked: " + lockings.keySet());
+         System.err.println("Lockings is not empty at the end of the trace");
       }
+
    }
 
    private String getLockKey(Event e) {
@@ -132,6 +149,14 @@ public class AnalyseLocks implements Processor {
 
    @Override
    public void finish() {
+  /*      sortTraces();
+        for (int i = 0; i < traces.size(); i++){
+            actual_process(traces.get(i),0);
+        }
+*/
+    //   if (!lockings.isEmpty()) {
+      //     throw new IllegalStateException("Not unlocked: " + lockings.keySet());
+     //  }
       out.println("\n*********");
       out.println("* LOCKS *");
       out.println("*********");
@@ -150,4 +175,13 @@ public class AnalyseLocks implements Processor {
       out.printf("Lock is held for %.2f us (%.2f - %.2f)\n",
                  lockHeldTime.avg() / 1000d, lockHeldTime.min() / 1000d, lockHeldTime.max() / 1000d);
    }
+
+    private void sortTraces() {
+        Collections.sort(traces, new Comparator<Trace>() {
+            @Override
+            public int compare(Trace o1, Trace o2) {
+                return o1.events.get(0).timestamp.compareTo(o2.events.get(0).timestamp);
+            }
+        });
+    }
 }

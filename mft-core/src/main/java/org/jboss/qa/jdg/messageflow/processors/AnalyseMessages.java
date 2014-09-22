@@ -204,6 +204,13 @@ public class AnalyseMessages implements Processor {
                // we don't know who sent that, cannot produce any stats
                continue;
             }
+
+            if (incomingForSource.get(0) == null) {
+                 incomingForSource.remove(0);
+                 sent.remove(0);
+                 // cannot produce any stats
+                 continue;
+            }
             String route = sent.get(0).source + "|" + incomingForSource.get(0).source;
             for (int i = 0; i + shiftIndex < sent.size(); ++i) {
                Event tx = sent.get(i + shiftIndex);

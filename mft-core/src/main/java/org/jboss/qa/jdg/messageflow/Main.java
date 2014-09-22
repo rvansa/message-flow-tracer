@@ -80,7 +80,10 @@ public class Main {
                return;
             }
             composer.setMaxAdvanceMillis(Long.parseLong(args[++i]));
-         } else if (args[i].startsWith("-")) {
+         } else if (args[i].equals("-b")) {
+            Composer.binarySpans = true;
+         }
+         else if (args[i].startsWith("-")) {
             System.err.println("Unknown option " + args[i]);
             printUsage();
             return;
@@ -107,6 +110,7 @@ public class Main {
       System.err.println("\t-l             \tAnalyze locks");
       System.err.println("\t-t             \tAnalyze traces");
       System.err.println("\t-i             \tAnalyze interceptors");
+      System.err.println("\t-b             \tBinary spans");
       System.err.println("\t-a             \tPrints log of traces and runs all available analyses");
       System.err.println("\t-c dir message \tWrite spans participating on trace with the message to the dir");
       System.err.println("\t-d milliseconds\tMaximum difference between highest processed timestamp in second-pass threads");

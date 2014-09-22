@@ -64,6 +64,7 @@ public class PrintTrace implements Processor {
 
    public void process(Trace trace, long traceCounter) {
       outLine++;
+   //suspiciously long traces
       if (trace.events.size() > 500) {
          System.err.printf("Long trace %d (%d events, %d messages) on line %d\n",
                            traceCounter, trace.events.size(), trace.messages.size(), outLine);

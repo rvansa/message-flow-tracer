@@ -32,6 +32,7 @@ import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.PrintStream;
+import java.io.*;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -59,7 +60,7 @@ public class Tracer {
    private static volatile boolean running = true;
 
    static {
-      Thread writer = new Thread() {
+      final Thread writer = new Thread() {
          @Override
          public void run() {
             String path = System.getProperty("org.jboss.qa.messageflowtracer.output");
@@ -68,26 +69,65 @@ public class Tracer {
             } catch (IOException e) {
                path = "/tmp/span.txt";
             }
-            PrintStream writer = null;
-            try {
-               writer = new PrintStream(new BufferedOutputStream(new FileOutputStream(path)));
-               writer.printf("%d=%d\n", System.nanoTime(), System.currentTimeMillis());
-               while (running || !finishedSpans.isEmpty()) {
-                  Span span;
-                  while ((span = finishedSpans.poll()) != null) {
-                     span.writeTo(writer, false);
-                  }
+            boolean binarySpans = System.getProperty("org.jboss.qa.messageflowtracer.binarySpans") != null ? true : false;
+
+            if (binarySpans){
+                  //without java serialization
+                  DataOutputStream dOStream = null;
+
                   try {
-                     Thread.sleep(10);
-                  } catch (InterruptedException e) {
-                     break;
+                     dOStream = new DataOutputStream(new BufferedOutputStream(new FileOutputStream(path)));
+
+                     dOStream.writeLong(System.nanoTime());
+                     dOStream.writeLong(System.currentTimeMillis());
+
+                     while (running || !finishedSpans.isEmpty()) {
+                        Span span;
+                        while ((span = finishedSpans.poll()) != null) {
+                           span.binaryWriteTo(dOStream, false);
+                        }
+                        try {
+                           Thread.sleep(10);
+                        } catch (InterruptedException e) {
+                           break;
+                        }
+                     }
+                  } catch (IOException e) {
+                     e.printStackTrace();
+                  } finally {
+                     if (dOStream != null) {
+                        try {
+                           dOStream.close();
+                        } catch (IOException e) {
+                           e.printStackTrace();
+                        }
+                     }
+                     synchronized (Tracer.class) {
+                        Tracer.class.notifyAll();
+                     }
                   }
-               }
-            } catch (FileNotFoundException e) {
-            } finally {
-               if (writer != null) writer.close();
-               synchronized (Tracer.class) {
-                  Tracer.class.notifyAll();
+            } else {
+               PrintStream writer = null;
+               try {
+                  writer = new PrintStream(new BufferedOutputStream(new FileOutputStream(path)));
+                  writer.printf("%d=%d\n", System.nanoTime(), System.currentTimeMillis());
+                  while (running || !finishedSpans.isEmpty()) {
+                     Span span;
+                     while ((span = finishedSpans.poll()) != null) {
+                        span.writeTo(writer, false);
+                     }
+                     try {
+                        Thread.sleep(10);
+                     } catch (InterruptedException e) {
+                        break;
+                     }
+                  }
+               } catch (FileNotFoundException e) {
+               } finally {
+                  if (writer != null) writer.close();
+                  synchronized (Tracer.class) {
+                     Tracer.class.notifyAll();
+                  }
                }
             }
          }
@@ -263,6 +303,12 @@ public class Tracer {
 
    public void forkSpan() {
       Span current = contextSpan.get();
+
+       //This might be wrongly inserted in Byteman rules
+       if (current == null){
+           System.err.println("Possible problem with the rules: Invoking \"forkSpan\" with empty contextSpan");
+           return;
+       }
       Span child = new Span(current);
       contextSpan.set(child);
       //System.err.printf("%s start %08x %08x -> %08x\n", Thread.currentThread().getName(), contextAnnotation.get().hashCode(), current.hashCode(), child.hashCode());
@@ -275,6 +321,7 @@ public class Tracer {
 
    public BatchSpan startNewBatch() {
       Span current = contextSpan.get();
+
       BatchSpan batchSpan = BatchSpan.newOrphan(current);
       contextSpan.set(batchSpan);
       batchSpan.addEvent(Event.Type.BATCH_PROCESSING_START, null);
@@ -296,12 +343,23 @@ public class Tracer {
 
    public void handlingMessage(String messageId) {
       Span span = contextSpan.get();
+      //This might be wrongly inserted in Byteman rules
+      if (span == null){
+          System.err.println("Possible problem with the rules: Invoking \"handlingMessage\" with empty contextSpan");
+          return;
+      }
       span.addEvent(Event.Type.MSG_PROCESSING_START, messageId);
       span.setIncoming(messageId);
    }
 
    public void batchProcessingStart(List<String> messageIds) {
       Span current = contextSpan.get();
+       //This might be wrongly inserted in Byteman rules
+       if (current == null){
+           System.err.println("Possible problem with the rules: Invoking \"batchProcessingStart\" with empty contextSpan");
+           return;
+       }
+
       BatchSpan batchSpan = BatchSpan.newChild(current, messageIds);
       contextSpan.set(batchSpan);
       StringBuilder sb = new StringBuilder();
@@ -318,14 +376,29 @@ public class Tracer {
 
    private void switchToParent() {
       Span current = contextSpan.get();
-      if (current.getParent() == null) {
-         throw new IllegalStateException();
+
+       //This might be wrongly inserted in Byteman rules
+       if (current == null){
+           System.err.println("Possible problem with the rules: Invoking \"switchToParent\" with empty contextSpan");
+           return;
+       }
+
+       if (current.getParent() == null) {
+         throw new IllegalStateException("Current span has no parent");
       }
       contextSpan.set(current.getParent());
    }
 
    public void batchPush(String messageId) {
       Span current = contextSpan.get();
+
+
+       //This might be wrongly inserted in Byteman rules
+       if (current == null){
+           System.err.println("Possible problem with the rules: Invoking \"batchPush\" with empty contextSpan");
+           return;
+       }
+
       if (current instanceof BatchSpan) {
          ((BatchSpan) current).push(messageId);
       } else {
@@ -335,6 +408,13 @@ public class Tracer {
 
    public void batchPop() {
       Span current = contextSpan.get();
+
+       //This might be wrongly inserted in Byteman rules
+       if (current == null){
+           System.err.println("Possible problem with the rules: Invoking \"batchPop\" with empty contextSpan");
+           return;
+       }
+
       if (current instanceof BatchSpan) {
          ((BatchSpan) current).pop();
       } else {
@@ -352,8 +432,13 @@ public class Tracer {
       }
    }
 
+    /***
+     *
+     * @return The current span, or creates new one and set it in contextSpan
+     */
    private Span ensureSpan() {
       Span span = contextSpan.get();
+
       if (span == null) {
          span = new Span();
          contextSpan.set(span);
@@ -400,6 +485,12 @@ public class Tracer {
 
    public void outcomingFinished() {
       Span span = contextSpan.get();
+
+       //This might be wrongly inserted in Byteman rules
+       if (span == null){
+           System.err.println("Possible problem with the rules: Invoking \"outcomingFinished\" with empty contextSpan");
+           return;
+       }
       span.addEvent(Event.Type.OUTCOMING_DATA_FINISHED, null);
       if (contextManaged.get() == null) {
          span.decrementRefCount(finishedSpans);
@@ -420,6 +511,9 @@ public class Tracer {
     * @param message
     */
    public void checkpoint(String message) {
+      if (contextSpan.get() == null) {
+        //  System.err.println("No span in checkpoint for: " + message);
+      }
       ensureSpan().addEvent(Event.Type.CHECKPOINT, message);
    }
 

@@ -43,6 +43,12 @@ public class BatchSpan extends Span {
       super(parent);
    }
 
+    /**
+     * Create new batchspan and new child span for each message
+     * @param parent
+     * @param messageIds
+     * @return
+     */
    public static BatchSpan newChild(Span parent, List<String> messageIds) {
       BatchSpan batchSpan = new BatchSpan(parent);
       for (String msg : messageIds) {
@@ -54,6 +60,11 @@ public class BatchSpan extends Span {
       return batchSpan;
    }
 
+    /**
+     * Create new batchspan and connect to suppressed span
+     * @param suppressed
+     * @return
+     */
    public static BatchSpan newOrphan(Span suppressed) {
       BatchSpan batchSpan = new BatchSpan();
       batchSpan.suppressed = suppressed;

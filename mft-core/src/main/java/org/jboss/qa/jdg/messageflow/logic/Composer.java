@@ -22,7 +22,7 @@
 
 package org.jboss.qa.jdg.messageflow.logic;
 
-import java.io.IOException;
+import java.io.*;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
@@ -32,6 +32,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLongArray;
 
 import org.jboss.qa.jdg.messageflow.objects.Event;
+import org.jboss.qa.jdg.messageflow.objects.Span;
 import org.jboss.qa.jdg.messageflow.objects.Trace;
 import org.jboss.qa.jdg.messageflow.processors.Processor;
 
@@ -58,7 +59,7 @@ public class Composer extends Logic {
    private int totalMessages;
    private boolean sortCausally = true;
    private long maxAdvanceMillis = 10000;
-
+   public static boolean binarySpans = false;
    public Composer() {
    }
 
@@ -142,8 +143,12 @@ public class Composer extends Logic {
       @Override
       public void run() {
          try {
-            read();
-            System.err.println("Finished reading (first pass) " + input);
+            if (binarySpans) {
+               readBinary();
+            } else {
+               read();
+            }
+            System.err.println("Finished reading (first pass) " + file);
          } catch (IOException e) {
             System.err.println("Error reading " + input + " due to " + e);
             e.printStackTrace();
@@ -151,6 +156,10 @@ public class Composer extends Logic {
          }
       }
 
+       /**
+        * Counts messages and establishes sequence of messages.
+        * @throws IOException
+        */
       private void read() throws IOException {
          input.open();
 
@@ -175,8 +184,39 @@ public class Composer extends Logic {
                }
             }
          }
+         System.err.printf("Read %d message references (in first pass)\n", messageReferences.size());
+      }
+      /**
+       * Counts messages and establishes sequence of messages.
+       * Reads from binary file
+       * @throws IOException
+       */
+      private void readBinary() throws IOException {
+
+         FileInputStream fileIS = new FileInputStream(file);
+         DataInputStream stream = new DataInputStream(new BufferedInputStream(fileIS));
+
+         stream.readLong();
+         stream.readLong();
+
+         while (fileIS.available() > 0){
+            Span span = readSpan(stream);
+
+            for (String message : span.getMessages()){
+               AtomicInteger prev =  messageReferences.putIfAbsent(message, new AtomicInteger(1));
+               if (prev != null){
+                  int refCount = prev.incrementAndGet();
+               }
+               int read = messagesRead.incrementAndGet();
+               if (read % 1000000 == 0) {
+                  System.err.printf("Read %d message references (~%d messages)\n", read, messageReferences.size());
+               }
+            }
+         }
+         stream.close();
       }
    }
+
 
    private class SecondPassThread extends Thread {
       private Input input;
@@ -191,13 +231,110 @@ public class Composer extends Logic {
       @Override
       public void run() {
          try {
+<<<<<<< HEAD
             read();
             System.err.println("Finished reading (second pass) " + input);
+=======
+             if (binarySpans){
+                readBinary();
+             }else {
+                 read();
+             }
+            System.err.println("Finished reading (second pass) " + file);
+>>>>>>> f8aed68... binary spans
          } catch (IOException e) {
             System.err.println("Error reading " + input + " due to " + e);
             e.printStackTrace();
             System.exit(1);
          }
+      }
+
+      public void readBinary() throws IOException{
+         String source = new File(file).getName();
+         source = source.substring(0, source.lastIndexOf('.') < 0 ? source.length() : source.lastIndexOf('.'));
+
+         FileInputStream fileIS = new FileInputStream(file);
+         DataInputStream stream = new DataInputStream(new BufferedInputStream(fileIS));
+
+         long nanoTime = stream.readLong();
+         long unixTime = stream.readLong();
+
+         Trace trace = null;
+         long localHighestUnixTimestamp = 0;
+         int spanCounter = 0;
+
+         while (fileIS.available() > 0){
+            //System.err.println("reading span");
+            Span span = readSpan(stream);
+         //   System.err.println(span);
+            if (!span.isNonCausal()){
+               tryRetire(trace);
+               trace = null;
+               checkAdvance(localHighestUnixTimestamp);
+               spanCounter++;
+
+               for (String message : span.getMessages()){
+                  if (trace == null) {
+                     trace = retrieveTraceFor(message);
+                  } else {
+                     Trace traceForThisMessage = traces.get(message);
+                     if (trace == traceForThisMessage) {
+                        //System.err.println("Message should not be twice in one trace on one machine! (" + message + ", " + source + ":" + lineNumber + ")");
+                     } else if (traceForThisMessage == null) {
+                        trace.addMessage(message);
+                        traceForThisMessage = traces.putIfAbsent(message, trace);
+                        if (traceForThisMessage != null) {
+                           trace = mergeTraces(trace, message, traceForThisMessage);
+                        }
+                     } else {
+                        trace = mergeTraces(trace, message, traceForThisMessage);
+                     }
+                  }
+                  decrementMessageRefCount(message);
+               }
+               if (trace == null) {
+                  // no message associated, but tracked?
+                  trace = new Trace();
+                  trace.lock.lock();
+               }
+            }else {
+               tryRetire(trace);
+               trace = null;
+               checkAdvance(localHighestUnixTimestamp);
+            }
+
+            for (Span.LocalEvent event : span.getEvents()){
+
+               long eventTime = event.timestamp;
+               String threadName = event.threadName;
+               String type = event.type.toString();
+               String text = event.text;
+
+               if (trace != null) {
+                  Event e = new Event(nanoTime, unixTime, eventTime, source, spanCounter, threadName, type, text);
+                  trace.addEvent(e);
+                  localHighestUnixTimestamp = Math.max(localHighestUnixTimestamp, e.timestamp.getTime());
+               } else {
+                  // NON-CAUSAL
+                  if (type.equals(Event.Type.OUTCOMING_DATA_STARTED.toString())) {
+                     Trace traceForThisMessage = retrieveTraceFor(text.trim());
+                     Event e = new Event(nanoTime, unixTime, eventTime, source, spanCounter,
+                             threadName, Event.Type.RETRANSMISSION.toString(), text);
+                     traceForThisMessage.addEvent(e);
+
+                     decrementMessageRefCount(text);
+                     tryRetire(traceForThisMessage);
+                     checkAdvance(e.timestamp.getTime());
+                  } else if (type.equals(Event.Type.TRACE_TAG.toString())) {
+                     System.err.println(String.format("Warning: Span with trace tag (%s) marked as non-causal (%s line)", text, source));
+                  }
+               }
+            }
+         }
+         tryRetire(trace);
+         // as we have finished reading, nobody should be blocked by our old timestamp
+         highestUnixTimestamps.set(selfIndex, Long.MAX_VALUE);
+         stream.close();
       }
 
       public void read() throws IOException {
@@ -265,7 +402,15 @@ public class Composer extends Logic {
                      continue;
                   }
 
-                  long eventTime = Long.valueOf(parts[1]);
+                   //In case of number format exception, the trace is thrown away
+                   long eventTime;
+                   try{
+                       eventTime = Long.valueOf(parts[1]);
+                   }catch (NumberFormatException e){
+                       System.err.println("Invalid number " + parts[1] + " this trace was thrown away");
+                       return;
+                   }
+
                   String threadName = parts[2];
                   String type = parts[3];
                   String text = parts.length > 4 ? parts[4].trim() : null;
@@ -300,6 +445,7 @@ public class Composer extends Logic {
          tryRetire(trace);
          // as we have finished reading, nobody should be blocked by our old timestamp
          highestUnixTimestamps.set(selfIndex, Long.MAX_VALUE);
+         System.err.println("Span counter second pass: " + spanCounter);
       }
 
       private void checkAdvance(long eventUnixTimestamp) {
@@ -401,6 +547,11 @@ public class Composer extends Logic {
          return trace;
       }
 
+       /**
+        * retire trace and remove all the trace references from the traces map
+        * if merge counter is not possitive and if messages from this trace are not in messageReferences
+        * @param trace
+        */
       private void tryRetire(Trace trace) {
          if (trace == null) return;
          try {
@@ -423,6 +574,11 @@ public class Composer extends Logic {
       }
    }
 
+    /**
+     * Sort trace and put into finishedTraces
+     * @param trace
+     * @throws InterruptedException
+     */
    private void retireTrace(Trace trace) throws InterruptedException {
       if (sortCausally) {
          try {
@@ -498,5 +654,39 @@ public class Composer extends Logic {
       public void finish() {
          this.finished = true;
       }
+   }
+
+   /**
+    * Reads span from binary file
+    * @param stream input stream to read data
+    * @return span from the stream
+    * @throws IOException
+    */
+   public Span readSpan(DataInputStream stream) throws IOException {
+      Span span = new Span();
+
+      if (stream.readBoolean()){
+         span.setNonCausal();
+      }
+      String incoming = stream.readUTF();
+      if (!incoming.equals("")){
+         span.setIncoming(incoming);
+      }
+
+      short outcommingCount = stream.readShort();
+      for (int i = 0; i < outcommingCount; i++){
+         span.addOutcoming(stream.readUTF());
+      }
+      short eventCount = stream.readShort();
+      for (int i = 0; i < eventCount; i++){
+         Span.LocalEvent event = new Span.LocalEvent();
+         event.timestamp = stream.readLong();
+         event.threadName = stream.readUTF();
+         //Is there a better way to do this?
+         event.type = Event.Type.values()[stream.readShort()];
+         event.text = stream.readUTF();
+         span.addEvent(event);
+      }
+      return span;
    }
 }

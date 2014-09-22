@@ -1,4 +1,4 @@
-/*
+       /*
  * JBoss, Home of Professional Open Source.
  * Copyright 2013, Red Hat Middleware LLC, and individual contributors
  * as indicated by the @author tags. See the copyright.txt file in the
@@ -22,7 +22,7 @@
 
 package org.jboss.qa.jdg.messageflow.objects;
 
-import java.io.PrintStream;
+import java.io.*;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -37,12 +37,12 @@ import java.util.Set;
 *
 * @author Radim Vansa &lt;rvansa@redhat.com&gt;
 */
-public class Span {
-   private final Span parent;
+public class Span implements Serializable {
+   private final transient Span parent;
    private String incoming;
    private List<String> outcoming;
    private Set<LocalEvent> events = new HashSet<LocalEvent>();
-   protected List<Span> children = new ArrayList<Span>();
+   protected transient List<Span> children = new ArrayList<Span>();
 
    private int counter = 1;
    private boolean nonCausal;
@@ -83,6 +83,9 @@ public class Span {
       outcoming.add(identifier);
    }
 
+    /**
+     * Increase counter in parent span, if it doesn't have a parent increase counter it this span.
+     */
    public void incrementRefCount() {
       if (parent != null) {
          parent.incrementRefCount();
@@ -90,10 +93,12 @@ public class Span {
       }
       synchronized (this) {
          counter++;
-         //System.err.printf("INC %08x -> %d\n", this.hashCode(), counter);
       }
    }
-
+    /**
+     * Decrement counter in parent span, if it doesn't have a parent decrement counter it this span.
+     * If counter is zero pass to finished
+     */
    public void decrementRefCount(Queue<Span> finishedSpans) {
       if (parent != null) {
          parent.decrementRefCount(finishedSpans);
@@ -101,11 +106,9 @@ public class Span {
       }
       synchronized (this) {
          counter--;
-         //System.err.printf("DEC %08x -> %d\n", this.hashCode(), counter);
          if (counter == 0) {
             passToFinished(finishedSpans);
          } else if (counter < 0) {
-            //writeWithChildren(System.err);
             throw new IllegalStateException();
          }
       }
@@ -121,10 +124,11 @@ public class Span {
       out.println("<End children>");
    }
 
+    /**
+     * add events, incoming and outcomming messages from parent, pass children to finished spans
+     * @param finishedSpans
+     */
    private void passToFinished(Queue<Span> finishedSpans) {
-//      synchronized (debugSpans) {
-//         debugSpans.remove(this);
-//      }
       if (parent != null) {
          if (parent == this) {
             throw new IllegalStateException();
@@ -161,6 +165,9 @@ public class Span {
    public synchronized void addEvent(Event.Type type, String text) {
       events.add(new LocalEvent(type, text));
    }
+   public void addEvent(LocalEvent event){
+      events.add(event);
+   }
 
    public void setNonCausal() {
       this.nonCausal = true;
@@ -172,11 +179,77 @@ public class Span {
 
    public void setIncoming(String incoming) {
       if (this.incoming != null) {
-         throw new IllegalArgumentException("Cannot have two incoming messages!");
+         //throw new IllegalArgumentException("Cannot have two incoming messages!");
+          System.err.println("Cannot have two incoming messages. The current incoming message is " + this.incoming);
+          return;
       }
       this.incoming = incoming;
    }
 
+   /**
+    * Writes span to output stream in binary format rather than plain text for performance improvement
+    * It uses Java serialization which is inefficient
+    * Sort is not implemented
+    * @param stream output stream
+    * @param sort not implemented
+    */
+   public synchronized void binaryWriteTo(ObjectOutputStream stream, boolean sort){
+         try {
+           stream.writeObject(this);
+         } catch (IOException e) {
+            e.printStackTrace();
+         }
+   }
+
+   /**
+    * Writes span to output stream in binary format rather than plain text for performance improvement
+    * @param stream output stream
+    * @param sort whether to sort events
+    */
+   public synchronized void binaryWriteTo(DataOutputStream stream, boolean sort){
+
+      try {
+         stream.writeBoolean(isNonCausal());
+         if (incoming != null){
+            stream.writeUTF(incoming);
+         }else{
+            stream.writeUTF("");
+         }
+
+         int outcommingCount = outcoming != null ? outcoming.size() : 0;
+         stream.writeShort(outcommingCount);
+         if (outcoming != null){
+            for (String message : outcoming){
+               stream.writeUTF(message);
+            }
+         }
+         int eventCount = events != null ? events.size() : 0;
+         stream.writeShort(eventCount);
+         if (events != null){
+            Collection<LocalEvent> events = this.events;
+            if (sort) {
+               LocalEvent[] array = events.toArray(new LocalEvent[events.size()]);
+               Arrays.sort(array);
+               events = Arrays.asList(array);
+            }
+            for (LocalEvent event : events){
+               stream.writeLong(event.timestamp);
+               stream.writeUTF(event.threadName);
+               stream.writeShort(event.type.ordinal());
+               stream.writeUTF(event.text == null ? "" : event.text);
+            }
+
+         }
+
+      } catch (IOException e) {
+         e.printStackTrace();
+      }
+   }
+   /**
+    * Writes span to output stream in text format.
+    * @param stream output stream
+    * @param sort whether to sort events
+    */
    public synchronized void writeTo(PrintStream stream, boolean sort) {
       if (isNonCausal()) {
          stream.print(Trace.NON_CAUSAL);
@@ -226,6 +299,23 @@ public class Span {
       return lastTag == null ? null : lastTag.text;
    }
 
+   public Set<String> getMessages() {
+      Set<String> messages = new HashSet<>();
+      if (incoming != null)
+         messages.add(incoming);
+      if (outcoming != null){
+         for (String msg : outcoming) {
+            if (outcoming != null)
+               messages.add(msg);
+         }
+      }
+      return messages;
+   }
+
+   public Set<LocalEvent> getEvents() {
+      return events;
+   }
+
    /* Debugging only */
    public String getTraceTag() {
       for (LocalEvent event : events) {
@@ -239,14 +329,39 @@ public class Span {
    public Span getCurrent() {
       return this;
    }
+   @Override
+   public String toString(){
+      StringBuilder sb = new StringBuilder();
+      sb.append(nonCausal ? "SPAN: nonCasual" : "SPAN: casual");
+      sb.append(" Incoming: " + incoming);
+      if (outcoming != null){
+         for (String message : outcoming){
+            sb.append(" Outcomming: " + message);
+         }
+      }
+      if (events != null){
+         sb.append(System.lineSeparator());
+         sb.append("Events:");
+         sb.append(System.lineSeparator());
+         for (LocalEvent event : events){
+            sb.append(" timestamp: " + event.timestamp);
+            sb.append(" threadName: " + event.threadName);
+            sb.append(" type: " + event.type);
+            sb.append(" text: " + event.text);
+            sb.append(System.lineSeparator());
+         }
+      }
 
-   private static class LocalEvent implements Comparable<LocalEvent> {
+      return sb.toString();
+   }
+   public static class LocalEvent implements Comparable<LocalEvent>, Serializable {
       public long timestamp;
       public String threadName;
       public Event.Type type;
       public String text;
 
 
+      public LocalEvent(){};
       private LocalEvent(Event.Type type, String text) {
          this.timestamp = System.nanoTime();
          this.threadName = Thread.currentThread().getName();
@@ -254,9 +369,11 @@ public class Span {
          this.text = text;
       }
 
-      @Override
+      //@Override
       public int compareTo(LocalEvent o) {
          return Long.compare(timestamp, o.timestamp);
       }
+
    }
+
 }
