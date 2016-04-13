@@ -1,0 +1,66 @@
+RULE put_entry
+INTERFACE ^org.radargun.CacheWrapper
+METHOD put
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT ENTRY
+IF TRUE
+DO
+  createManagedContext();
+#  traceTag("PUT" + $key);
+  traceTag("PUT");
+ENDRULE
+
+RULE put_exit
+INTERFACE ^org.radargun.CacheWrapper
+METHOD put
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT EXIT
+IF TRUE
+DO
+  checkpoint("PUT_exit");
+  destroyManagedContext();
+ENDRULE
+
+RULE remove_entry
+INTERFACE ^org.radargun.CacheWrapper
+METHOD remove
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT ENTRY
+IF TRUE
+DO
+  createManagedContext();
+  traceTag("REMOVE");
+ENDRULE
+
+RULE remove_exit
+INTERFACE ^org.radargun.CacheWrapper
+METHOD remove
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT EXIT
+IF TRUE
+DO
+  checkpoint("REMOVE_exit");
+  destroyManagedContext();
+ENDRULE
+
+RULE get_entry
+INTERFACE ^org.radargun.CacheWrapper
+METHOD get
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT ENTRY
+IF TRUE
+DO
+  createManagedContext();
+  traceTag("GET");
+ENDRULE
+
+RULE get_exit
+INTERFACE ^org.radargun.CacheWrapper
+METHOD get
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT EXIT
+IF TRUE
+DO
+  checkpoint("GET_exit");
+  destroyManagedContext();
+ENDRULE

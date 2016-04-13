@@ -69,7 +69,7 @@ public class Trace {
             }
             for (Event inc : spe) {
                if (inc.type == Event.Type.INCOMING_DATA) {
-                  inc.text = e.text;
+                  inc.text = inc.text == null ? e.text : inc.text + ", " + e.text;
                   incoming.add(e);
                   break;
                }

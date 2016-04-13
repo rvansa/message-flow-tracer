@@ -7,6 +7,7 @@
       <module>mft-core</module>
       <module>mft-jgroups327</module>
       <module>mft-jgroups331</module>
+      <module>mft-jgroups340</module>
    </modules>
    <groupId>org.jboss.qa</groupId>
 

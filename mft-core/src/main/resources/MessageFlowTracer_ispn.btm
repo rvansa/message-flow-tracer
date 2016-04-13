@@ -58,7 +58,7 @@ RULE removeInternal_exit
 CLASS org.infinispan.CacheImpl
 METHOD removeInternal
 HELPER org.jboss.qa.jdg.messageflow.Tracer
-AT ENTRY
+AT EXIT
 IF TRUE
 DO
   checkpoint("REMOVE_exit");

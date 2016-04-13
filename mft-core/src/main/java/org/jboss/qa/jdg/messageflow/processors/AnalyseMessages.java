@@ -98,6 +98,9 @@ public class AnalyseMessages implements Processor {
        */
       int uniqueMessages = 0;
 
+      int totalSent = 0;
+      int totalReceived = 0;
+
       @Override
       public boolean equals(Object o) {
          if (this == o) return true;
@@ -115,13 +118,9 @@ public class AnalyseMessages implements Processor {
          return true;
       }
 
-      public int totalMessages() {
-         return uniqueMessages + discarded + ignored + lost + duplicates;
-      }
-
       public void printTo(PrintStream out) {
-         out.printf("%9d unique, %9d total, %5d discarded, %5d ignored, %5d lost, %5d duplicate",
-                    uniqueMessages, totalMessages(), discarded, ignored, lost, duplicates);
+         out.printf("%9d unique, %9d total sent, %9d total received, %5d discarded, %5d ignored, %5d lost, %5d duplicate",
+                    uniqueMessages, totalSent, totalReceived, discarded, ignored, lost, duplicates);
       }
    }
 
@@ -170,7 +169,7 @@ public class AnalyseMessages implements Processor {
             if (event.text == null || !event.text.equals(message)) continue;
             if (event.type == Event.Type.OUTCOMING_DATA_STARTED || event.type == Event.Type.RETRANSMISSION) {
                sent.add(event);
-            } else if (event.type == Event.Type.MSG_PROCESSING_START || event.type == Event.Type.DISCARD || event.type == Event.Type.CONTAINS) {
+            } else if (event.type == Event.Type.MSG_PROCESSING_START || event.type == Event.Type.DISCARD) {
                ArrayList<Event> incomingForSource = incoming.get(event.source);
                if (incomingForSource == null) {
                   incomingForSource = new ArrayList<Event>();
@@ -178,7 +177,7 @@ public class AnalyseMessages implements Processor {
                }
                Event e = event;
                //TODO: document why not for discard (currently I don't remember)
-               if (event.type == Event.Type.MSG_PROCESSING_START || event.type == Event.Type.CONTAINS) {
+               if (event.type == Event.Type.MSG_PROCESSING_START) {
                   e = findIncoming(trace.events, event.source, event.span);
                }
                incomingForSource.add(e);
@@ -227,6 +226,8 @@ public class AnalyseMessages implements Processor {
                routeStats.ignored += incomingForSource.size() - discarded - 1;
                routeStats.discarded += discarded;
                routeStats.uniqueMessages++;
+               routeStats.totalSent = sent.size();
+               routeStats.totalReceived = incomingForSource.size();
             }
          }
          if (incoming.isEmpty()) {
@@ -318,14 +319,16 @@ public class AnalyseMessages implements Processor {
          out.println("\tTransport:");
          double averageLatency = 0;
          int unique = 0;
-         int total = 0;
+         int totalSent = 0;
+         int totalReceived = 0;
          int latencyCount = 0;
          for (Map.Entry<String, RouteStats> entry : stats.routeStats.entrySet()) {
             String[] parts = entry.getKey().split("\\|");
             String routeBack = String.format("%s|%s", parts[1], parts[0]);
             RouteStats forward = entry.getValue();
             unique += forward.uniqueMessages;
-            total += forward.totalMessages();
+            totalSent += forward.totalSent;
+            totalReceived += forward.totalReceived;
             RouteStats back = stats.routeStats.get(routeBack);
             if (back == null) {
                out.printf("\t\t%s\t<-> %s:\tlatency unknown\n", parts[0], parts[1]);
@@ -344,12 +347,12 @@ public class AnalyseMessages implements Processor {
                back.printTo(out);
                out.println();
                unique += back.uniqueMessages;
-               total += back.totalMessages();
-
+               totalSent += back.totalSent;
+               totalReceived += back.totalReceived;
             }
          }
-         out.printf("\t\tAverage latency:\t%5.2f us\tUnique messages: %9d\tTotal messages: %9d\n\n",
-                           averageLatency / latencyCount, unique, total);
+         out.printf("\t\tAverage latency:\t%5.2f us\tUnique messages: %9d\tSent messages: %9d\tReceived messages: %9d\n\n",
+                           averageLatency / latencyCount, unique, totalSent, totalReceived);
       }
       out.printf("Transmission of %d messages not detected.\n", notSent);
       out.printf("%d messages have not been received at all.\n", notReceived);

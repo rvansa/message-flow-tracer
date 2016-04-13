@@ -22,19 +22,21 @@
 
 package org.jboss.qa.jdg.messageflow;
 
+import org.jboss.qa.jdg.messageflow.objects.BatchSpan;
+import org.jboss.qa.jdg.messageflow.objects.Event;
+import org.jboss.qa.jdg.messageflow.objects.Span;
+
 import java.io.BufferedOutputStream;
+import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
+import java.io.IOException;
 import java.io.PrintStream;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicInteger;
-
-import org.jboss.qa.jdg.messageflow.objects.BatchSpan;
-import org.jboss.qa.jdg.messageflow.objects.Event;
-import org.jboss.qa.jdg.messageflow.objects.Span;
 
 /**
  * This class should track the execution path from the external request
@@ -61,7 +63,11 @@ public class Tracer {
          @Override
          public void run() {
             String path = System.getProperty("org.jboss.qa.messageflowtracer.output");
-            if (path == null) path = "/tmp/span.txt";
+            if (path == null) try {
+               path = File.createTempFile("span.", ".txt", new File(System.getProperty("org.jboss.qa.messageflowtracer.outputdir", "/tmp"))).getAbsolutePath();
+            } catch (IOException e) {
+               path = "/tmp/span.txt";
+            }
             PrintStream writer = null;
             try {
                writer = new PrintStream(new BufferedOutputStream(new FileOutputStream(path)));
@@ -160,8 +166,8 @@ public class Tracer {
       contextManaged.remove();
    }
 
-   public void incomingData() {
-      ensureSpan().addEvent(Event.Type.INCOMING_DATA, null);
+   public void incomingData(int length) {
+      ensureSpan().addEvent(Event.Type.INCOMING_DATA, length + " b");
       contextManaged.set(true);
    }
 

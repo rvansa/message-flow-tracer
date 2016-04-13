@@ -1,0 +1,45 @@
+RULE callRemoteMethods_entry
+CLASS org.jgroups.blocks.RpcDispatcher
+METHOD callRemoteMethods(Collection, MethodCall, RequestOptions)
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT ENTRY
+IF TRUE
+DO
+  createManagedContext();
+#  traceTag("PUT" + $key);
+  traceTag("CALL_METHODS");
+ENDRULE
+
+RULE callRemoteMethods_exit
+CLASS org.jgroups.blocks.RpcDispatcher
+METHOD callRemoteMethods(Collection, MethodCall, RequestOptions)
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT EXIT
+IF TRUE
+DO
+  checkpoint("CALL_METHODS_exit");
+  destroyManagedContext();
+ENDRULE
+
+RULE callRemoteMethod_entry
+CLASS org.jgroups.blocks.RpcDispatcher
+METHOD callRemoteMethod(Address, MethodCall, RequestOptions)
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT ENTRY
+IF TRUE
+DO
+  createManagedContext();
+#  traceTag("PUT" + $key);
+  traceTag("CALL_METHOD");
+ENDRULE
+
+RULE callRemoteMethod_exit
+CLASS org.jgroups.blocks.RpcDispatcher
+METHOD callRemoteMethod(Address, MethodCall, RequestOptions)
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+AT EXIT
+IF TRUE
+DO
+  checkpoint("CALL_METHOD_exit");
+  destroyManagedContext();
+ENDRULE

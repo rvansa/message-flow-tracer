@@ -40,7 +40,7 @@ import java.util.Set;
 public class Span {
    private final Span parent;
    private String incoming;
-   private Set<String> outcoming;
+   private List<String> outcoming;
    private Set<LocalEvent> events = new HashSet<LocalEvent>();
    protected List<Span> children = new ArrayList<Span>();
 
@@ -78,7 +78,7 @@ public class Span {
 
    public synchronized void addOutcoming(String identifier) {
       if (outcoming == null) {
-         outcoming = new HashSet<String>();
+         outcoming = new ArrayList<String>();
       }
       outcoming.add(identifier);
    }

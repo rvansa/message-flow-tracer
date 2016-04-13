@@ -2,10 +2,10 @@ RULE incomingData
 CLASS org.jgroups.protocols.UDP$PacketReceiver
 METHOD run
 HELPER org.jboss.qa.jdg.messageflow.Tracer
-AT LINE 677
+AFTER INVOKE DatagramSocket.receive
 IF TRUE
 DO
-  incomingData();
+  incomingData($packet.getLength());
 ENDRULE
 
 RULE dataDispatched
