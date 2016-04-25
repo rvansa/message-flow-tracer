@@ -50,8 +50,9 @@ public class AnalyseInterceptors implements Processor {
       for (List<Event> spanEvents : eventsBySpan.values()) {
          Map<String, TimestampAndInterceptor> interceptorEvents = new HashMap<String, TimestampAndInterceptor>();
          for (Event event : spanEvents) {
-            if (event.type == Event.Type.CHECKPOINT && event.text.startsWith("INT ")) {
-               String[] parts = event.text.substring(4).split("@");
+            String text;
+            if (event.type == Event.Type.CHECKPOINT && (text = (String) event.payload).startsWith("INT ")) {
+               String[] parts = text.substring(4).split("@");
                TimestampAndInterceptor prev = interceptorEvents.get(parts[0]); // by command
                String commandAndInterceptor = parts[0] + "@" + parts[2];
                if (prev != null) {
@@ -70,7 +71,7 @@ public class AnalyseInterceptors implements Processor {
                }
                interceptorEvents.put(parts[0], new TimestampAndInterceptor(event.nanoTime, parts[2]));
             } else if (event.type == Event.Type.TRACE_TAG) {
-               traceTag = event.text;
+               traceTag = (String) event.payload;
             }
          }
       }

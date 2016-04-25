@@ -23,17 +23,24 @@
 package org.jboss.qa.jdg.messageflow.logic;
 
 import java.io.*;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLongArray;
+import java.util.function.Predicate;
 
 import org.jboss.qa.jdg.messageflow.objects.Event;
+import org.jboss.qa.jdg.messageflow.objects.MessageId;
 import org.jboss.qa.jdg.messageflow.objects.Span;
 import org.jboss.qa.jdg.messageflow.objects.Trace;
+import org.jboss.qa.jdg.messageflow.persistence.BinaryPersister;
+import org.jboss.qa.jdg.messageflow.persistence.Persister;
+import org.jboss.qa.jdg.messageflow.persistence.TextPersister;
 import org.jboss.qa.jdg.messageflow.processors.Processor;
 
 /**
@@ -46,10 +53,9 @@ public class Composer extends Logic {
    // this map is populated in first pass and should contain the number of references to each message
    // in second pass it is only read and when the counter reaches zero for all messages in the trace
    // the trace is ready to be written to file
-   private ConcurrentMap<String, AtomicInteger> messageReferences = new ConcurrentHashMap<String, AtomicInteger>();
+   private ConcurrentMap<MessageId, AtomicInteger> messageReferences = new ConcurrentHashMap<>();
    private AtomicInteger messagesRead = new AtomicInteger(0);
-
-   private ConcurrentMap<String, Trace> traces = new ConcurrentHashMap<String, Trace>();
+   private ConcurrentMap<MessageId, Trace> traces = new ConcurrentHashMap<>();
 
    private LinkedBlockingQueue<Trace> finishedTraces = new LinkedBlockingQueue<Trace>(1000);
    private AtomicLongArray highestUnixTimestamps;
@@ -59,9 +65,10 @@ public class Composer extends Logic {
    private int totalMessages;
    private boolean sortCausally = true;
    private long maxAdvanceMillis = 10000;
-   public static boolean binarySpans = false;
-   public Composer() {
-   }
+   private boolean binarySpans = false;
+   private List<Predicate<Trace>> filters = new ArrayList<>();
+   private long maxMessages = Long.MAX_VALUE;
+   private long maxTraces = Long.MAX_VALUE;
 
    @Override
    public void run() {
@@ -90,10 +97,10 @@ public class Composer extends Logic {
       ProcessorThread processorThread = new ProcessorThread(processors);
       processorThread.start();
       joinAll(threads);
-      processorThread.finish();
       while (!finishedTraces.isEmpty()) {
          Thread.yield();
       }
+      processorThread.finish();
       try {
          processorThread.join();
       } catch (InterruptedException e) {
@@ -133,6 +140,22 @@ public class Composer extends Logic {
       this.maxAdvanceMillis = maxAdvanceMillis;
    }
 
+   public void setBinarySpans(boolean binarySpans) {
+      this.binarySpans = binarySpans;
+   }
+
+   public void addFilter(Predicate<Trace> filter) {
+      filters.add(filter);
+   }
+
+   public void setMaxMessages(long maxMessages) {
+      this.maxMessages = maxMessages;
+   }
+
+   public void setMaxTraces(long maxTraces) {
+      this.maxTraces = maxTraces;
+   }
+
    private class FirstPassThread extends Thread {
       private Input input;
 
@@ -143,80 +166,33 @@ public class Composer extends Logic {
       @Override
       public void run() {
          try {
-            if (binarySpans) {
-               readBinary();
-            } else {
-               read();
+            input.open();
+            try {
+               Persister persister = binarySpans ? new BinaryPersister(input.stream()) : new TextPersister(input.stream());
+               persister.read(span -> {
+                  for (MessageId msg : span.getMessages()) {
+                     AtomicInteger prev = messageReferences.putIfAbsent(msg, new AtomicInteger(1));
+                     if (prev != null) {
+                        prev.incrementAndGet();
+                     }
+                     int read = messagesRead.incrementAndGet();
+                     if (read % 1000000 == 0) {
+                        System.err.printf("%s Read %d message references (~%d messages)\n",
+                           new SimpleDateFormat("HH:mm:ss").format(new Date()), read, messageReferences.size());
+                     }
+                  }
+               }, false);
+               System.err.println("Finished reading (first pass) " + input);
+            } finally {
+               input.close();
             }
-            System.err.println("Finished reading (first pass) " + file);
          } catch (IOException e) {
             System.err.println("Error reading " + input + " due to " + e);
             e.printStackTrace();
             System.exit(1);
          }
       }
-
-       /**
-        * Counts messages and establishes sequence of messages.
-        * @throws IOException
-        */
-      private void read() throws IOException {
-         input.open();
-
-         String line;
-         input.readLine(); // timestamp info - ignored
-         while ((line = input.readLine()) != null) {
-            if (line.startsWith(Trace.SPAN) || line.startsWith(Trace.NON_CAUSAL)) {
-               String[] parts = line.split(";");
-               for (int i = line.startsWith(Trace.NON_CAUSAL) ? 2 : 1; i < parts.length; ++i) {
-                  if (parts[i].equals("null")) continue;
-                  AtomicInteger prev = messageReferences.putIfAbsent(parts[i], new AtomicInteger(1));
-                  if (prev != null) {
-                     int refCount = prev.incrementAndGet();
-                     // System.out.println(input + ":" + lineNumber + " inc " + parts[i] + " -> " + refCount);
-                  } else {
-                     // System.out.println(input + ":" + lineNumber + " add " + parts[i]);
-                  }
-                  int read = messagesRead.incrementAndGet();
-                  if (read % 1000000 == 0) {
-                     System.err.printf("Read %d message references (~%d messages)\n", read, messageReferences.size());
-                  }
-               }
-            }
-         }
-         System.err.printf("Read %d message references (in first pass)\n", messageReferences.size());
-      }
-      /**
-       * Counts messages and establishes sequence of messages.
-       * Reads from binary file
-       * @throws IOException
-       */
-      private void readBinary() throws IOException {
-
-         FileInputStream fileIS = new FileInputStream(file);
-         DataInputStream stream = new DataInputStream(new BufferedInputStream(fileIS));
-
-         stream.readLong();
-         stream.readLong();
-
-         while (fileIS.available() > 0){
-            Span span = readSpan(stream);
-
-            for (String message : span.getMessages()){
-               AtomicInteger prev =  messageReferences.putIfAbsent(message, new AtomicInteger(1));
-               if (prev != null){
-                  int refCount = prev.incrementAndGet();
-               }
-               int read = messagesRead.incrementAndGet();
-               if (read % 1000000 == 0) {
-                  System.err.printf("Read %d message references (~%d messages)\n", read, messageReferences.size());
-               }
-            }
-         }
-         stream.close();
-      }
    }
-
 
    private class SecondPassThread extends Thread {
       private Input input;
@@ -231,144 +207,17 @@ public class Composer extends Logic {
       @Override
       public void run() {
          try {
-<<<<<<< HEAD
-            read();
-            System.err.println("Finished reading (second pass) " + input);
-=======
-             if (binarySpans){
-                readBinary();
-             }else {
-                 read();
-             }
-            System.err.println("Finished reading (second pass) " + file);
->>>>>>> f8aed68... binary spans
-         } catch (IOException e) {
-            System.err.println("Error reading " + input + " due to " + e);
-            e.printStackTrace();
-            System.exit(1);
-         }
-      }
+            input.open();
+            String source = input.shortName();
+            int dotIndex = source.lastIndexOf('.');
+            String sourceName = dotIndex < 0 ? source : source.substring(0, dotIndex);
 
-      public void readBinary() throws IOException{
-         String source = new File(file).getName();
-         source = source.substring(0, source.lastIndexOf('.') < 0 ? source.length() : source.lastIndexOf('.'));
-
-         FileInputStream fileIS = new FileInputStream(file);
-         DataInputStream stream = new DataInputStream(new BufferedInputStream(fileIS));
-
-         long nanoTime = stream.readLong();
-         long unixTime = stream.readLong();
-
-         Trace trace = null;
-         long localHighestUnixTimestamp = 0;
-         int spanCounter = 0;
-
-         while (fileIS.available() > 0){
-            //System.err.println("reading span");
-            Span span = readSpan(stream);
-         //   System.err.println(span);
-            if (!span.isNonCausal()){
-               tryRetire(trace);
-               trace = null;
-               checkAdvance(localHighestUnixTimestamp);
-               spanCounter++;
-
-               for (String message : span.getMessages()){
-                  if (trace == null) {
-                     trace = retrieveTraceFor(message);
-                  } else {
-                     Trace traceForThisMessage = traces.get(message);
-                     if (trace == traceForThisMessage) {
-                        //System.err.println("Message should not be twice in one trace on one machine! (" + message + ", " + source + ":" + lineNumber + ")");
-                     } else if (traceForThisMessage == null) {
-                        trace.addMessage(message);
-                        traceForThisMessage = traces.putIfAbsent(message, trace);
-                        if (traceForThisMessage != null) {
-                           trace = mergeTraces(trace, message, traceForThisMessage);
-                        }
-                     } else {
-                        trace = mergeTraces(trace, message, traceForThisMessage);
-                     }
-                  }
-                  decrementMessageRefCount(message);
-               }
-               if (trace == null) {
-                  // no message associated, but tracked?
-                  trace = new Trace();
-                  trace.lock.lock();
-               }
-            }else {
-               tryRetire(trace);
-               trace = null;
-               checkAdvance(localHighestUnixTimestamp);
-            }
-
-            for (Span.LocalEvent event : span.getEvents()){
-
-               long eventTime = event.timestamp;
-               String threadName = event.threadName;
-               String type = event.type.toString();
-               String text = event.text;
-
-               if (trace != null) {
-                  Event e = new Event(nanoTime, unixTime, eventTime, source, spanCounter, threadName, type, text);
-                  trace.addEvent(e);
-                  localHighestUnixTimestamp = Math.max(localHighestUnixTimestamp, e.timestamp.getTime());
-               } else {
-                  // NON-CAUSAL
-                  if (type.equals(Event.Type.OUTCOMING_DATA_STARTED.toString())) {
-                     Trace traceForThisMessage = retrieveTraceFor(text.trim());
-                     Event e = new Event(nanoTime, unixTime, eventTime, source, spanCounter,
-                             threadName, Event.Type.RETRANSMISSION.toString(), text);
-                     traceForThisMessage.addEvent(e);
-
-                     decrementMessageRefCount(text);
-                     tryRetire(traceForThisMessage);
-                     checkAdvance(e.timestamp.getTime());
-                  } else if (type.equals(Event.Type.TRACE_TAG.toString())) {
-                     System.err.println(String.format("Warning: Span with trace tag (%s) marked as non-causal (%s line)", text, source));
-                  }
-               }
-            }
-         }
-         tryRetire(trace);
-         // as we have finished reading, nobody should be blocked by our old timestamp
-         highestUnixTimestamps.set(selfIndex, Long.MAX_VALUE);
-         stream.close();
-      }
-
-      public void read() throws IOException {
-         String source = input.shortName();
-         source = source.substring(0, source.lastIndexOf('.') < 0 ? source.length() : source.lastIndexOf('.'));
-
-         input.open();
-
-         String timeSync = input.readLine();
-         if (timeSync == null) {
-            System.err.println("Empty file!");
-            return;
-         }
-         String[] nanoAndUnix = timeSync.split("=");
-         long nanoTime = Long.parseLong(nanoAndUnix[0]);
-         long unixTime = Long.parseLong(nanoAndUnix[1]);
-
-         Trace trace = null;
-         long localHighestUnixTimestamp = 0;
-         int lineNumber = 1;
-         int spanCounter = 0;
-         String line;
-         while ((line = input.readLine()) != null) {
-            try {
-               lineNumber++;
-               String[] parts = line.split(";");
-               if (line.startsWith(Trace.SPAN)) {
-                  tryRetire(trace);
-                  trace = null;
-                  checkAdvance(localHighestUnixTimestamp);
-                  spanCounter++;
-                  for (int i = 1; i < parts.length; ++i) {
-                     String message = parts[i];
-                     if (message.equals("null")) continue;
+            Persister persister = binarySpans ? new BinaryPersister(input.stream()) : new TextPersister(input.stream());
+            AtomicInteger spanCounter = new AtomicInteger();
+            persister.read(span -> {
+               if (!span.isNonCausal()) {
+                  Trace trace = null;
+                  for (MessageId message : span.getMessages()) {
                      if (trace == null) {
                         trace = retrieveTraceFor(message);
                      } else {
@@ -392,60 +241,39 @@ public class Composer extends Logic {
                      trace = new Trace();
                      trace.lock.lock();
                   }
-               } else if (line.startsWith(Trace.NON_CAUSAL)) {
-                  tryRetire(trace);
-                  trace = null;
-                  checkAdvance(localHighestUnixTimestamp);
-               } else if (line.startsWith(Trace.EVENT)) {
-                  if (parts.length < 4 || parts.length > 5) {
-                     System.err.println("Invalid line " + lineNumber + "\n" + line);
-                     continue;
-                  }
-
-                   //In case of number format exception, the trace is thrown away
-                   long eventTime;
-                   try{
-                       eventTime = Long.valueOf(parts[1]);
-                   }catch (NumberFormatException e){
-                       System.err.println("Invalid number " + parts[1] + " this trace was thrown away");
-                       return;
-                   }
-
-                  String threadName = parts[2];
-                  String type = parts[3];
-                  String text = parts.length > 4 ? parts[4].trim() : null;
-
-                  if (trace != null) {
-                     Event e = new Event(nanoTime, unixTime, eventTime, source, spanCounter, threadName, type, text);
+                  for (Span.LocalEvent event : span.getEvents()) {
+                     Event e = new Event(persister.getNanoTime(), persister.getUnixTime(), event.timestamp, sourceName,
+                        spanCounter.getAndIncrement(), event.threadName, event.type, event.payload);
                      trace.addEvent(e);
-                     localHighestUnixTimestamp = Math.max(localHighestUnixTimestamp, e.timestamp.getTime());
-                  } else {
-                     // NON-CAUSAL
-                     if (type.equals(Event.Type.OUTCOMING_DATA_STARTED.toString())) {
-                        Trace traceForThisMessage = retrieveTraceFor(parts[4].trim());
-                        Event e = new Event(nanoTime, unixTime, eventTime, source, spanCounter,
-                                            threadName, Event.Type.RETRANSMISSION.toString(), text);
+                     checkAdvance(e.timestamp.getTime());
+                  }
+                  tryRetire(trace);
+               } else {
+                  for (Span.LocalEvent event : span.getEvents()) {
+                     if (event.type == Event.Type.OUTCOMING_DATA_STARTED) {
+                        MessageId messageId = (MessageId) event.payload;
+                        Trace traceForThisMessage = retrieveTraceFor(messageId);
+                        Event e = new Event(persister.getNanoTime(), persister.getUnixTime(), event.timestamp,
+                           sourceName, spanCounter.getAndIncrement(), event.threadName, Event.Type.RETRANSMISSION, event.payload);
                         traceForThisMessage.addEvent(e);
 
-                        decrementMessageRefCount(text);
+                        decrementMessageRefCount(messageId);
                         tryRetire(traceForThisMessage);
                         checkAdvance(e.timestamp.getTime());
-                     } else if (type.equals(Event.Type.TRACE_TAG.toString())) {
-                        System.err.println(String.format("Warning: Span with trace tag (%s) marked as non-causal (%s line %d)", text, source, lineNumber));
+                     } else if (event.type == Event.Type.TRACE_TAG) {
+                        System.err.println(String.format("Warning: Span with trace tag (%s) marked as non-causal (%s line %d)", event.payload, source, persister.getPosition()));
                      }
                   }
-               } else {
-                  System.err.println("Invalid line: " + line);
                }
-            } catch (RuntimeException e) {
-               System.err.println("Error reading line " + lineNumber + ":\n" + line + "\n");
-               throw e;
-            }
+            }, true);
+            // as we have finished reading, nobody should be blocked by our old timestamp
+            highestUnixTimestamps.set(selfIndex, Long.MAX_VALUE);
+            System.err.println("Span counter second pass: " + spanCounter);
+         } catch (IOException e) {
+            System.err.println("Error reading " + input + " due to " + e);
+            e.printStackTrace();
+            System.exit(1);
          }
-         tryRetire(trace);
-         // as we have finished reading, nobody should be blocked by our old timestamp
-         highestUnixTimestamps.set(selfIndex, Long.MAX_VALUE);
-         System.err.println("Span counter second pass: " + spanCounter);
       }
 
       private void checkAdvance(long eventUnixTimestamp) {
@@ -469,7 +297,7 @@ public class Composer extends Logic {
          }
       }
 
-      private Trace mergeTraces(Trace trace, String message, Trace traceForThisMessage) {
+      private Trace mergeTraces(Trace trace, MessageId message, Trace traceForThisMessage) {
          // hopefully even if we merge the traces twice the result is still correct
          for (;;) {
             if (traceForThisMessage.lock.tryLock()) {
@@ -484,7 +312,7 @@ public class Composer extends Logic {
                   }
                   traceForThisMessage = possiblyOtherTrace;
                } else {
-                  for (String msg : traceForThisMessage.messages) {
+                  for (MessageId msg : traceForThisMessage.messages) {
                      traces.put(msg, trace);
                      trace.addMessage(msg);
                   }
@@ -518,7 +346,7 @@ public class Composer extends Logic {
          return trace;
       }
 
-      private Trace retrieveTraceFor(String message) {
+      private Trace retrieveTraceFor(MessageId message) {
          Trace trace = traces.get(message);
          if (trace == null) {
             trace = new Trace();
@@ -556,12 +384,12 @@ public class Composer extends Logic {
          if (trace == null) return;
          try {
             if (trace.mergeCounter > 0) return;
-            for (String message : trace.messages) {
+            for (MessageId message : trace.messages) {
                if (messageReferences.get(message) != null) {
                   return;
                }
             }
-            for (String message : trace.messages) {
+            for (MessageId message : trace.messages) {
                traces.remove(message);
             }
             trace.retired = true;
@@ -593,7 +421,7 @@ public class Composer extends Logic {
       finishedTraces.put(trace);
    }
 
-   private void decrementMessageRefCount(String message) {
+   private void decrementMessageRefCount(MessageId message) {
       AtomicInteger counter = messageReferences.get(message);
       if (counter == null) {
          throw new IllegalStateException("No message counter for " + message);
@@ -602,7 +430,6 @@ public class Composer extends Logic {
       if (refCount == 0) {
          messageReferences.remove(message);
       }
-      //System.out.println(source + " dec " + message + " -> " + refCount);
    }
 
    private class ProcessorThread extends Thread {
@@ -616,18 +443,26 @@ public class Composer extends Logic {
 
       @Override
       public void run() {
-         long traceCounter = 0;
-         while (!finished || !finishedTraces.isEmpty()) {
-            Trace trace = null;
+         long traceCounter = 0, filteredTraceCounter = 0;
+         OUTER: while (!finished || !finishedTraces.isEmpty()) {
+            Trace trace;
             try {
-               while (!finished && finishedTraces.isEmpty()) {
-                  Thread.yield();
+               for (;;) {
+                  if (finished) break OUTER;
+                  if (finishedTraces.isEmpty()) {
+                     Thread.yield();
+                  } else {
+                     break;
+                  }
                }
-               if (finishedTraces.isEmpty()) break;
                trace = finishedTraces.take();
             } catch (InterruptedException e) {
                System.err.println("Printer interrupted!");
                break;
+            }
+            if (filters.stream().anyMatch(f -> !f.test(trace))) {
+               ++filteredTraceCounter;
+               continue;
             }
             for (Processor processor : processors) {
                try {
@@ -637,18 +472,26 @@ public class Composer extends Logic {
                   exception.printStackTrace(System.err);
                }
             }
-            if (++traceCounter % 10000 == 0) {
-               System.err.printf("Processed %d traces, %d/%d messages\n",
-                                 traceCounter, totalMessages - messageReferences.size(), totalMessages);
+            if ((++traceCounter + filteredTraceCounter) % 10000 == 0) {
+               System.err.printf("%s Processed %d traces (%d filtered out), %d/%d messages\n",
+                  new SimpleDateFormat("HH:mm:ss").format(new Date()),
+                  traceCounter, filteredTraceCounter, totalMessages - messageReferences.size(), totalMessages);
                if (reportMemoryUsage) {
                   Composer.reportMemoryUsage();
                }
+            }
+            if (totalMessages - messageReferences.size() > maxMessages) {
+               System.err.println("Stopping because the limit of messages has been reached.");
+               finish();
+            } else if (traceCounter > maxTraces) {
+               System.err.println("Stopping because the limit of traces has been reached.");
+               finish();
             }
          }
          for (Processor processor : processors) {
             processor.finish();
          }
-         System.err.println("Processing finished");
+         System.err.printf("Processing finished, %d traces (%d filtered out)\n", traceCounter, filteredTraceCounter);
       }
 
       public void finish() {
@@ -662,31 +505,31 @@ public class Composer extends Logic {
     * @return span from the stream
     * @throws IOException
     */
-   public Span readSpan(DataInputStream stream) throws IOException {
-      Span span = new Span();
-
-      if (stream.readBoolean()){
-         span.setNonCausal();
-      }
-      String incoming = stream.readUTF();
-      if (!incoming.equals("")){
-         span.setIncoming(incoming);
-      }
-
-      short outcommingCount = stream.readShort();
-      for (int i = 0; i < outcommingCount; i++){
-         span.addOutcoming(stream.readUTF());
-      }
-      short eventCount = stream.readShort();
-      for (int i = 0; i < eventCount; i++){
-         Span.LocalEvent event = new Span.LocalEvent();
-         event.timestamp = stream.readLong();
-         event.threadName = stream.readUTF();
-         //Is there a better way to do this?
-         event.type = Event.Type.values()[stream.readShort()];
-         event.text = stream.readUTF();
-         span.addEvent(event);
-      }
-      return span;
-   }
+//   public Span readSpan(DataInputStream stream) throws IOException {
+//      Span span = new Span();
+//
+//      if (stream.readBoolean()){
+//         span.setNonCausal();
+//      }
+//      String incoming = stream.readUTF();
+//      if (!incoming.equals("")){
+//         span.setIncoming(incoming);
+//      }
+//
+//      short outcommingCount = stream.readShort();
+//      for (int i = 0; i < outcommingCount; i++){
+//         span.addOutcoming(stream.readUTF());
+//      }
+//      short eventCount = stream.readShort();
+//      for (int i = 0; i < eventCount; i++){
+//         Span.LocalEvent event = new Span.LocalEvent();
+//         event.timestamp = stream.readLong();
+//         event.threadName = stream.readUTF();
+//         //Is there a better way to do this?
+//         event.type = Event.Type.values()[stream.readShort()];
+//         event.payload = stream.readUTF();
+//         span.addEvent(event);
+//      }
+//      return span;
+//   }
 }

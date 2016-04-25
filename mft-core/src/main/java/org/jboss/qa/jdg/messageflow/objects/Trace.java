@@ -25,17 +25,16 @@ package org.jboss.qa.jdg.messageflow.objects;
 import java.util.*;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /**
 * @author Radim Vansa &lt;rvansa@redhat.com&gt;
 */
 public class Trace {
-   public static final String NON_CAUSAL = "NC";
-   public static final String SPAN = "SPAN";
-   public static final String EVENT = "E";
 
-   public List<Event> events = new ArrayList<Event>();
-   public Set<String> messages = new HashSet<String>();
+   public List<Event> events = new ArrayList<>();
+   public Set<MessageId> messages = new HashSet<>();
    public int negativeCycles = 0;
    public volatile boolean retired = false;
    public int mergeCounter = 0;
@@ -44,7 +43,7 @@ public class Trace {
    // this lock both against internal manipulation AND removing/replacing in messageFlows
    public Lock lock = new ReentrantLock();
 
-   public void addMessage(String msg) {
+   public void addMessage(MessageId msg) {
       if (retired) throw new IllegalStateException();
       messages.add(msg);
    }
@@ -56,20 +55,21 @@ public class Trace {
 
    public void sortCausally() {
       /* Identify handling events */
-      Set<String> availableTransmissions = new HashSet<String>();
-      Map<String, Set<Event>> incomingEvents = new HashMap<String, Set<Event>>(messages.size());
+      Set<MessageId> availableTransmissions = new HashSet<>();
+      Map<MessageId, Set<Event>> incomingEvents = new HashMap<>(messages.size());
       Map<String, List<Event>> eventsBySpan = getEventsBySpan();
       for (List<Event> spe : eventsBySpan.values()) {
          for (Event e : spe) {
             if (e.type != Event.Type.MSG_PROCESSING_START && e.type != Event.Type.CONTAINS) continue;
-            Set<Event> incoming = incomingEvents.get(e.text);
+            Set<Event> incoming = incomingEvents.get(e.payload);
             if (incoming == null) {
-               incoming = new HashSet<Event>();
-               incomingEvents.put(e.text, incoming);
+               incoming = new HashSet<>();
+               incomingEvents.put((MessageId) e.payload, incoming);
             }
             for (Event inc : spe) {
                if (inc.type == Event.Type.INCOMING_DATA) {
-                  inc.text = inc.text == null ? e.text : inc.text + ", " + e.text;
+//                  inc.payload = inc.payload == null ? e.payload : inc.payload + ", " + e.payload;
+                  inc.payload = e.payload;
                   incoming.add(e);
                   break;
                }
@@ -78,12 +78,12 @@ public class Trace {
       }
       /* Find first moment when the message was sent - in fact retransmissions may hapen even BEFORE the message
          was sent the first time in a regular way */
-      Map<String, Event> outcomings = new HashMap<String, Event>();
+      Map<MessageId, Event> outcomings = new HashMap<>();
       for (Event e : events) {
          if (e.type == Event.Type.OUTCOMING_DATA_STARTED || e.type == Event.Type.RETRANSMISSION) {
-            Event out = outcomings.get(e.text);
+            Event out = outcomings.get(e.payload);
             if (out == null || out.nanoTime > e.nanoTime) {
-               outcomings.put(e.text, e);
+               outcomings.put((MessageId) e.payload, e);
             }
          }
       }
@@ -92,12 +92,12 @@ public class Trace {
       Map<String, Long> graph = new HashMap<String, Long>();
       Set<String> vertices = new HashSet<String>();
       for (Event e : outcomings.values()) {
-         availableTransmissions.add(e.text);
-         Set<Event> incoming = incomingEvents.get(e.text);
+         availableTransmissions.add((MessageId) e.payload);
+         Set<Event> incoming = incomingEvents.get(e.payload);
          if (incoming != null) {
             for (Event inc : incoming) {
                if (inc.source == e.source && inc.nanoTime < e.nanoTime) {
-                  System.err.printf("Message %s was received prior to first transmission, trace cannot be sorted causally.\n", e.text);
+                  System.err.printf("Message %s was received prior to first transmission, trace cannot be sorted causally.\n", e.payload);
                   sortByTimestamps();
                   return;
                }
@@ -176,10 +176,10 @@ public class Trace {
       }
       Collections.sort(all, new Event.CorrectedTimestampComparator());
       /* Shift improperly causally sorted messages */
-      Map<String, List<Event>> delayedEvents = new HashMap<String, List<Event>>();
-      Set<String> transmissions = new HashSet<String>();
-      Map<String, Set<String>> delayingSources = new HashMap<String, Set<String>>();
-      Map<Event, Set<String>> delayCauses = new HashMap<Event, Set<String>>();
+      Map<MessageId, List<Event>> delayedEvents = new HashMap<>();
+      Set<MessageId> transmissions = new HashSet<>();
+      Map<String, Set<MessageId>> delayingSources = new HashMap<>();
+      Map<Event, Set<MessageId>> delayCauses = new HashMap<>();
       List<Event> finalEvents = new ArrayList<Event>(all.size());
       for (Event e : all) {
          tryFlushEvent(e, finalEvents, delayedEvents, transmissions, availableTransmissions, delayingSources, delayCauses);
@@ -205,33 +205,33 @@ public class Trace {
       this.events = finalEvents;
    }
 
-   private void tryFlushEvent(Event e, List<Event> finalEvents, Map<String, List<Event>> delayedEvents, Set<String> transmissions, Set<String> availableTransmissions, Map<String, Set<String>> delayingSources, Map<Event, Set<String>> delayCauses) {
-      Set<String> sourceDelay = delayingSources.get(e.source);
+   private void tryFlushEvent(Event e, List<Event> finalEvents, Map<MessageId, List<Event>> delayedEvents, Set<MessageId> transmissions, Set<MessageId> availableTransmissions, Map<String, Set<MessageId>> delayingSources, Map<Event, Set<MessageId>> delayCauses) {
+      Set<MessageId> sourceDelay = delayingSources.get(e.source);
       if (sourceDelay != null) {
-         for (String message : sourceDelay) {
+         for (MessageId message : sourceDelay) {
             delayedEvents.get(message).add(e);
          }
          delayCauses.put(e, sourceDelay);
       } else {
          if (e.type == Event.Type.OUTCOMING_DATA_STARTED || e.type == Event.Type.RETRANSMISSION) {
-            transmissions.add(e.text);
+            transmissions.add((MessageId) e.payload);
             finalEvents.add(e);
             // remove source delay before flushing the delayed events
-            for (Iterator<Set<String>> iterator = delayingSources.values().iterator(); iterator.hasNext(); ) {
-               Set<String> pending = iterator.next();
-               pending.remove(e.text);
+            for (Iterator<Set<MessageId>> iterator = delayingSources.values().iterator(); iterator.hasNext(); ) {
+               Set<MessageId> pending = iterator.next();
+               pending.remove(e.payload);
                if (pending.isEmpty()) {
                   iterator.remove();
                }
             }
-            List<Event> list = delayedEvents.remove(e.text);
+            List<Event> list = delayedEvents.remove(e.payload);
             if (list != null) {
                for (Event delayed : list) {
-                  Set<String> cause = delayCauses.get(delayed);
+                  Set<MessageId> cause = delayCauses.get(delayed);
                   if (cause == null) {
                      if (!finalEvents.contains(delayed)) throw new IllegalStateException();
                   } else {
-                     cause.remove(e.text);
+                     cause.remove(e.payload);
                      if (cause.isEmpty()) {
                         delayCauses.remove(delayed);
                         tryFlushEvent(delayed, finalEvents, delayedEvents, transmissions, availableTransmissions, delayingSources, delayCauses);
@@ -240,23 +240,23 @@ public class Trace {
                }
             }
          } else if (e.type == Event.Type.INCOMING_DATA) {
-            if (transmissions.contains(e.text) || !availableTransmissions.contains(e.text)) {
+            if (transmissions.contains(e.payload) || !availableTransmissions.contains(e.payload)) {
                finalEvents.add(e);
             } else {
-               List<Event> list = delayedEvents.get(e.text);
+               List<Event> list = delayedEvents.get(e.payload);
                if (list == null) {
-                  list = new ArrayList<Event>();
-                  delayedEvents.put(e.text, list);
+                  list = new ArrayList<>();
+                  delayedEvents.put((MessageId) e.payload, list);
                }
                list.add(e);
-               Set<String> pending = delayingSources.get(e.source);
+               Set<MessageId> pending = delayingSources.get(e.source);
                if (pending == null) {
-                  pending = new HashSet<String>();
+                  pending = new HashSet<>();
                } else {
-                  pending = new HashSet<String>(pending);
+                  pending = new HashSet<>(pending);
                }
                delayingSources.put(e.source, pending);
-               pending.add(e.text);
+               pending.add((MessageId) e.payload);
                delayCauses.put(e, pending);
             }
          } else {
@@ -281,38 +281,22 @@ public class Trace {
    }
 
    public Map<String, List<Event>> getEventsBySpan() {
-      return getEventsBySelector(new Selector<String>() {
-         @Override
-         public String select(Event e) {
-            return e.source + "|" + e.span;
-         }
-      });
+      return getEventsBySelector(e -> e.source + "|" + e.span);
    }
 
    private Map<String, List<Event>> getEventsBySource() {
-      return getEventsBySelector(new Selector<String>() {
-         @Override
-         public String select(Event e) {
-            return e.source;
-         }
-      });
+      return getEventsBySelector(e -> e.source);
    }
 
-   public <T> Map<T, List<Event>> getEventsBySelector(Selector<T> selector) {
-      Map<T, List<Event>> eventsBySelector = new HashMap<T, List<Event>>();
-      for (Event e : events) {
-         T selection = selector.select(e);
-         List<Event> list = eventsBySelector.get(selection);
-         if (list == null) {
-            list = new ArrayList<Event>();
-            eventsBySelector.put(selection, list);
-         }
-         list.add(e);
-      }
-      return eventsBySelector;
+   private static <T> List<T> mergeLists(List<T> l1, List<T> l2) {
+      // TODO: just use concat list
+      ArrayList<T> list = new ArrayList<>(l1.size() + l2.size());
+      list.addAll(l1);
+      list.addAll(l2);
+      return list;
    }
 
-   private interface Selector<T> {
-      T select(Event e);
+   public <T> Map<T, List<Event>> getEventsBySelector(Function<Event, T> selector) {
+      return events.stream().collect(Collectors.toMap(selector, Collections::singletonList, Trace::mergeLists));
    }
 }

@@ -33,6 +33,7 @@ import org.jboss.qa.jdg.messageflow.objects.Trace;
  */
 public class AnalyseLocks implements Processor {
 
+   static final String[] NO_KEYS = new String[0];
    private PrintStream out = System.out;
 
    private AvgMinMax lockingTraces = new AvgMinMax();
@@ -67,48 +68,38 @@ public class AnalyseLocks implements Processor {
       Event[] events = trace.events.toArray(new Event[0]);
       for (int i = 0; i < events.length; ++i) {
          Event e = events[i];
-         if (e.type != Event.Type.CHECKPOINT || e.text == null) continue;
-         if (e.text.startsWith("LOCK ")) {
-            String key = getLockKey(e);
-            Locking locking = lockings.get(key);
-            if (locking != null) throw new IllegalStateException("The key already exists in lockings. key: " + key  + " time: " + e.nanoTime);
-            locking = new Locking();
-            lockings.put(key, locking);
-            if (key.equals(inspectedKey)){
-                System.out.println("Putting key into lockings key: " + key + " timestamp:" + e.nanoTime + " corrected timestamp: " + e.correctedTimestamp);
+         if (e.type != Event.Type.CHECKPOINT || e.payload == null) continue;
+         String text = (String) e.payload;
+         if (text.startsWith("LOCK ")) {
+            addLock(lockings, e, parseKey(text));
+         } else if (text.startsWith("LOCK_ALL ")) {
+            for (String key : parseKeys(text)) {
+               addLock(lockings, e, key);
             }
-            locking.lockAttempt = e;
-         } else if (e.text.startsWith("LOCK_OK") || e.text.startsWith("LOCK_FAIL")) {
+         } else if (text.startsWith("LOCK_OK") || text.startsWith("LOCK_FAIL")) {
             for (int j = i - 1; j >= 0; --j) {
                Event other = events[j];
                if (other.type == Event.Type.CHECKPOINT && other.source == e.source && other.threadName.equals(e.threadName)
-                     && other.text != null && other.text.startsWith("LOCK ")) {
-                  String key = getLockKey(other);
-                  Locking locking = lockings.get(key);
-                  if (locking == null) throw new IllegalStateException("The key does not exists in lockings. key: " + key);
-                  if (e.text.startsWith("LOCK_OK")) {
-                     locking.lockOk = e;
-                  } else {
-                     locking.lockFail = e;
-                     lockings.remove(key);
-                      if (key.equals(inspectedKey)){
-                          System.out.println("Removing key from lockings key (LOCK FAILED): " + key + " timestamp:" + e.nanoTime + " corrected timestamp: " + e.correctedTimestamp);
-                      }
-                     finished.add(locking);
-                  }
+                  && other.payload != null && ((String) other.payload).startsWith("LOCK ")) {
+                  String key = parseKey((String) other.payload);
+                  boolean successful = text.startsWith("LOCK_OK");
+                  setLockCompleted(lockings, finished, e, key, successful);
                   break;
                }
             }
-         } else if (e.text.startsWith("UNLOCK")) {
-            int openBracket = e.text.indexOf('[');
-            int closeBracket = e.text.indexOf(']');
-            if (openBracket < 0 || closeBracket < 0 || openBracket >= closeBracket) {
-               throw new IllegalStateException("brackets don't match");
+         } else if (text.startsWith("LOCK_ALL_OK")) {
+            for (int j = i - 1; j >= 0; --j) {
+               Event other = events[j];
+               if (other.type == Event.Type.CHECKPOINT && other.source == e.source && other.threadName.equals(e.threadName)
+                  && other.payload != null && ((String) other.payload).startsWith("LOCK_ALL ")) {
+                  for (String key : parseKeys(((String) other.payload))) {
+                     setLockCompleted(lockings, finished, e, key, true);
+                     break;
+                  }
+               }
             }
-            if (openBracket + 1 == closeBracket) continue;
-
-            String keys = e.text.substring(openBracket + 1, closeBracket);
-            for (String key : keys.split(",")) {
+         } else if (text.startsWith("UNLOCK")) {
+            for (String key : parseKeys(text)) {
                Locking locking = lockings.remove(key.trim());
                 if (key.equals(inspectedKey)){
                     System.out.println("Removing key from lockings key (UNLOCK): " + key + " timestamp:" + e.nanoTime + " corrected timestamp: " + e.correctedTimestamp);
@@ -143,8 +134,48 @@ public class AnalyseLocks implements Processor {
 
    }
 
-   private String getLockKey(Event e) {
-      return e.text.substring(5).trim();
+   public void setLockCompleted(Map<String, Locking> lockings, Set<Locking> finished, Event e, String key, boolean successful) {
+      Locking locking = lockings.get(key);
+      if (locking == null)
+         throw new IllegalStateException("The key does not exists in lockings. key: " + key);
+      if (successful) {
+         locking.lockOk = e;
+      } else {
+         locking.lockFail = e;
+         lockings.remove(key);
+         if (key.equals(inspectedKey)) {
+            System.out.println("Removing key from lockings key (LOCK FAILED): " + key + " timestamp:" + e.nanoTime + " corrected timestamp: " + e.correctedTimestamp);
+         }
+         finished.add(locking);
+      }
+   }
+
+   public void addLock(Map<String, Locking> lockings, Event e, String key) {
+      Locking locking = lockings.get(key);
+      if (locking != null)
+         throw new IllegalStateException("The key already exists in lockings. key: " + key + " time: " + e.nanoTime);
+      locking = new Locking();
+      lockings.put(key, locking);
+      if (key.equals(inspectedKey)) {
+         System.out.println("Putting key into lockings key: " + key + " timestamp:" + e.nanoTime + " corrected timestamp: " + e.correctedTimestamp);
+      }
+      locking.lockAttempt = e;
+   }
+
+   public String[] parseKeys(String string) {
+      int openBracket = string.indexOf('[');
+      int closeBracket = string.indexOf(']');
+      if (openBracket < 0 || closeBracket < 0 || openBracket >= closeBracket) {
+         throw new IllegalStateException("brackets don't match");
+      }
+      if (openBracket + 1 == closeBracket) return NO_KEYS;
+
+      String keys = string.substring(openBracket + 1, closeBracket);
+      return keys.split(",");
+   }
+
+   private String parseKey(String string) {
+      return string.substring(5).trim();
    }
 
    @Override

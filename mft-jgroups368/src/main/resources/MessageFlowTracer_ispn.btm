@@ -1,0 +1,419 @@
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+
+RULE putInternal_entry
+CLASS org.infinispan.cache.impl.CacheImpl
+METHOD putInternal
+AT ENTRY
+IF TRUE
+DO
+  createManagedContext();
+  traceTag("PUT");
+ENDRULE
+
+RULE putInternal_exit
+CLASS org.infinispan.cache.impl.CacheImpl
+METHOD putInternal
+
+AT EXIT
+IF TRUE
+DO
+  checkpoint("PUT_exit");
+  destroyManagedContext();
+ENDRULE
+
+RULE putAllInternal_entry
+CLASS org.infinispan.cache.impl.CacheImpl
+METHOD putAllInternal
+AT ENTRY
+IF TRUE
+DO
+  createManagedContext();
+  traceTag("PUT_ALL");
+ENDRULE
+
+RULE putAllInternal_exit
+CLASS org.infinispan.cache.impl.CacheImpl
+METHOD putAllInternal
+AT EXIT
+IF TRUE
+DO
+  checkpoint("PUT_ALL_exit");
+  destroyManagedContext();
+ENDRULE
+
+RULE removeInternal_entry
+CLASS org.infinispan.cache.impl.CacheImpl
+METHOD removeInternal
+AT ENTRY
+IF TRUE
+DO
+  createManagedContext();
+  traceTag("REMOVE");
+ENDRULE
+
+RULE removeInternal_exit
+CLASS org.infinispan.cache.impl.CacheImpl
+METHOD removeInternal
+AT ENTRY
+IF TRUE
+DO
+  checkpoint("REMOVE_exit");
+  destroyManagedContext();
+ENDRULE
+
+RULE get_entry
+CLASS org.infinispan.cache.impl.CacheImpl
+METHOD get(java.lang.Object)
+AT ENTRY
+IF TRUE
+DO
+  createManagedContext();
+  traceTag("GET");
+ENDRULE
+
+RULE get_exit
+CLASS org.infinispan.cache.impl.CacheImpl
+METHOD get(java.lang.Object)
+AT EXIT
+IF TRUE
+DO
+  checkpoint("GET_exit");
+  destroyManagedContext();
+ENDRULE
+
+RULE getAsync_entry
+CLASS org.infinispan.cache.impl.CacheImpl
+METHOD getAsync(java.lang.Object)
+AT ENTRY
+IF TRUE
+DO
+  createManagedContext();
+  traceTag("GET_ASYNC");
+ENDRULE
+
+RULE getAsync_exit
+CLASS org.infinispan.cache.impl.CacheImpl
+METHOD getAsync(java.lang.Object)
+AT EXIT
+IF TRUE
+DO
+  checkpoint("GET_ASYNC_exit");
+  destroyManagedContext();
+ENDRULE
+
+###########
+# Transactions #
+###########
+
+RULE beginTx_entry
+INTERFACE ^javax.transaction.TransactionManager
+METHOD begin
+AT ENTRY
+IF TRUE
+DO
+   createManagedContext();
+   traceTag("BEGIN_TX");
+ENDRULE
+
+RULE beginTx_exit
+INTERFACE ^javax.transaction.TransactionManager
+METHOD begin
+AT EXIT
+IF TRUE
+DO
+   destroyManagedContext();
+ENDRULE
+
+RULE beginTx_jbossTM_entry
+CLASS ^com.arjuna.ats.internal.jta.transaction.arjunacore.BaseTransaction
+METHOD begin
+AT ENTRY
+IF TRUE
+DO
+   createManagedContext();
+   traceTag("BEGIN_TX");
+ENDRULE
+
+RULE beginTx_jbossTM_exit
+CLASS ^com.arjuna.ats.internal.jta.transaction.arjunacore.BaseTransaction
+METHOD begin
+AT EXIT
+IF TRUE
+DO
+   destroyManagedContext();
+ENDRULE
+
+RULE commitTx_entry
+INTERFACE ^javax.transaction.TransactionManager
+METHOD commit
+AT ENTRY
+IF TRUE
+DO
+   createManagedContext();
+   traceTag("COMMIT_TX");
+ENDRULE
+
+RULE commitTx_exit
+INTERFACE ^javax.transaction.TransactionManager
+METHOD commit
+AT EXIT
+IF TRUE
+DO
+   destroyManagedContext();
+ENDRULE
+
+RULE commitTx_jbossTM_entry
+CLASS com.arjuna.ats.internal.jta.transaction.arjunacore.BaseTransaction
+METHOD commit
+AT ENTRY
+IF TRUE
+DO
+   createManagedContext();
+   traceTag("COMMIT_TX");
+ENDRULE
+
+RULE commitTx_jbossTM_exit
+CLASS com.arjuna.ats.internal.jta.transaction.arjunacore.TransactionImple
+METHOD commitAndDisassociate
+AT INVOKE TransactionImple.removeTransaction ALL
+IF TRUE
+DO
+   destroyManagedContext();
+ENDRULE
+
+RULE rollbackTx_entry
+INTERFACE ^javax.transaction.TransactionManager
+METHOD rollback
+AT ENTRY
+IF TRUE
+DO
+   createManagedContext();
+   traceTag("ROLLBACK_TX");
+ENDRULE
+
+RULE rollbackTx_exit
+INTERFACE ^javax.transaction.TransactionManager
+METHOD rollback
+AT EXIT
+IF TRUE
+DO
+   destroyManagedContext();
+ENDRULE
+
+RULE rollbackTx_jbossTM_entry
+CLASS com.arjuna.ats.internal.jta.transaction.arjunacore.BaseTransaction
+METHOD rollback
+AT ENTRY
+IF TRUE
+DO
+   createManagedContext();
+   traceTag("ROLLBACK_TX");
+ENDRULE
+
+RULE rollbackTx_jbossTM_exit
+CLASS com.arjuna.ats.internal.jta.transaction.arjunacore.TransactionImple
+METHOD rollbackAndDisassociate
+AT INVOKE TransactionImple.removeTransaction ALL
+IF TRUE
+DO
+   destroyManagedContext();
+ENDRULE
+
+RULE exceptionThrown
+CLASS org.infinispan.cache.impl.CacheImpl
+METHOD executeCommandAndCommitIfNeeded
+AT THROW ALL
+IF TRUE
+DO
+   checkpoint("Throwing " + $^);
+   destroyManagedContext();
+ENDRULE
+
+###########
+# Locking #
+###########
+
+RULE lock
+CLASS org.infinispan.interceptors.locking.AbstractLockingInterceptor
+METHOD lockAndRecord
+AT ENTRY
+IF TRUE
+DO
+  checkpoint("LOCK " + $2);
+ENDRULE
+
+RULE lock_ok
+CLASS org.infinispan.interceptors.locking.AbstractLockingInterceptor
+METHOD lockAndRecord
+AT EXIT
+IF TRUE
+DO
+  checkpoint("LOCK_OK");
+ENDRULE
+
+RULE lockAll
+CLASS org.infinispan.interceptors.locking.AbstractLockingInterceptor
+METHOD lockAllAndRecord
+AT ENTRY
+IF TRUE
+DO
+  checkpoint("LOCK_ALL " + $2);
+ENDRULE
+
+RULE lockAllOk
+CLASS org.infinispan.interceptors.locking.AbstractLockingInterceptor
+METHOD lockAllAndRecord
+AT EXIT
+IF TRUE
+DO
+  checkpoint("LOCK_ALL_OK");
+ENDRULE
+
+RULE lockFail
+CLASS org.infinispan.util.concurrent.locks.impl.DefaultLockManager$KeyAwareExtendedLockPromise
+METHOD lock
+AT THROW
+IF TRUE
+DO
+  checkpoint("LOCK_FAIL " + $0.key);
+ENDRULE
+
+RULE unlock
+CLASS org.infinispan.util.concurrent.locks.impl.DefaultLockManager
+METHOD unlock
+AT EXIT
+IF TRUE
+DO
+  checkpoint("UNLOCK " + $1);
+ENDRULE
+
+RULE unlockAll
+CLASS org.infinispan.util.concurrent.locks.impl.DefaultLockManager
+METHOD unlockAll(Collection, Object)
+AT ENTRY
+IF TRUE
+DO
+  checkpoint("UNLOCK_ALL " + $1);
+ENDRULE
+
+############
+# Commands #
+############
+
+RULE dispatchCommandMulti
+CLASS org.infinispan.remoting.transport.jgroups.CommandAwareRpcDispatcher
+METHOD processCalls
+AT ENTRY
+IF TRUE
+DO
+  setContextMarkWithClass($1);
+ENDRULE
+
+RULE dispatchCommandSingle
+CLASS org.infinispan.remoting.transport.jgroups.CommandAwareRpcDispatcher
+METHOD processSingleCall
+AT ENTRY
+IF TRUE
+DO
+  setContextMarkWithClass($1);
+ENDRULE
+
+RULE ReplicableCommand_perform
+INTERFACE ^org.infinispan.commands.ReplicableCommand
+METHOD perform
+AT ENTRY
+IF TRUE
+DO
+  msgTagWithClass($0);
+ENDRULE
+
+#RULE DataWriteCommand_perform
+#INTERFACE ^org.infinispan.commands.write.DataWriteCommand
+#METHOD perform
+##AT ENTRY
+#IF TRUE
+#DO
+#  checkpoint($0.getCommandInvocationId().toString());
+#ENDRULE
+
+
+################
+# Interceptors #
+################
+
+#RULE invokeFirstInterceptorEntry
+#CLASS org.infinispan.interceptors.InterceptorChain
+#METHOD invoke
+##AT ENTRY
+#IF TRUE
+#DO
+#  checkpoint("INT " + simpleName($2) + "@>@" + simpleName($0.firstInChain));
+#ENDRULE
+
+#RULE invokeFirstInterceptorExit
+#CLASS org.infinispan.interceptors.InterceptorChain
+#METHOD invoke
+##AT EXIT
+#IF TRUE
+#DO
+#  checkpoint("INT " + simpleName($2) + "@<@" + simpleName($0.firstInChain));
+#ENDRULE
+
+#RULE invokeNextInterceptorEntry
+#CLASS org.infinispan.interceptors.base.CommandInterceptor
+#METHOD invokeNextInterceptor
+#AT ENTRY
+#IF TRUE
+#DO
+#  checkpoint("INT " + simpleName($2) + "@>@" + simpleName($0.next));
+#ENDRULE
+
+#RULE invokeNextInterceptorExit
+#CLASS org.infinispan.interceptors.base.CommandInterceptor
+#METHOD invokeNextInterceptor
+#AT EXIT
+#IF TRUE
+#DO
+#  checkpoint("INT " + simpleName($2) + "@<@" + simpleName($0.next));
+#ENDRULE
+
+#############
+# Executors #
+#############
+
+RULE BlockingTaskAwareExecutorServiceImpl_execute_offer
+CLASS org.infinispan.util.concurrent.BlockingTaskAwareExecutorServiceImpl
+METHOD execute
+AT INVOKE Queue.offer ALL
+IF TRUE
+DO
+  threadHandoverStarted($1);
+ENDRULE
+
+RULE BlockingTaskAwareExecutorServiceImpl_doExecute
+CLASS org.infinispan.util.concurrent.BlockingTaskAwareExecutorServiceImpl
+METHOD doExecute
+AT ENTRY
+IF TRUE
+DO
+  threadHandoverSuccess($1);
+ENDRULE
+
+RULE BlockingTaskAwareExecutorServiceImpl_doExecute_offer
+CLASS org.infinispan.util.concurrent.BlockingTaskAwareExecutorServiceImpl
+METHOD doExecute
+AT INVOKE Queue.offer ALL
+IF TRUE
+DO
+  checkpoint("Rejected");
+  threadHandoverStarted($1);
+ENDRULE
+
+RULE BlockingTaskAwareExecutorServiceImpl_doExecute_exit
+CLASS org.infinispan.util.concurrent.BlockingTaskAwareExecutorServiceImpl
+METHOD doExecute
+AT EXIT
+IF TRUE
+DO
+  threadProcessingCompleted();
+ENDRULE

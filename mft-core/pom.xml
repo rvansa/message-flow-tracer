@@ -44,6 +44,11 @@
          <artifactId>bcprov-jdk16</artifactId>
          <version>1.46</version>
       </dependency>
+      <dependency>
+         <groupId>org.jboss.byteman</groupId>
+         <artifactId>byteman</artifactId>
+         <version>3.0.5</version>
+      </dependency>
    </dependencies>
 
    <build>

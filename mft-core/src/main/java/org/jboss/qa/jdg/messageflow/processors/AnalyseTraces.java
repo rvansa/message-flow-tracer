@@ -32,6 +32,7 @@ import java.util.TreeMap;
 import java.util.TreeSet;
 
 import org.jboss.qa.jdg.messageflow.objects.Event;
+import org.jboss.qa.jdg.messageflow.objects.MessageId;
 import org.jboss.qa.jdg.messageflow.objects.Trace;
 
 /**
@@ -64,7 +65,7 @@ public class AnalyseTraces implements Processor {
       String traceTag = NO_TAG;
       for (Event event : trace.events) {
          if (event.type == Event.Type.TRACE_TAG) {
-            traceTag = event.text;
+            traceTag = (String) event.payload;
             break;
          }
       }
@@ -75,13 +76,13 @@ public class AnalyseTraces implements Processor {
       }
       stats.messages.add(trace.messages.size());
       stats.traces++;
-      for (String message : trace.messages) {
+      for (MessageId message : trace.messages) {
          TreeSet<String> msgTags = new TreeSet<String>();
          for (Event event : trace.events) {
-            if (event.type == Event.Type.MSG_PROCESSING_START && event.text.equals(message)) {
+            if (event.type == Event.Type.MSG_PROCESSING_START && event.payload.equals(message)) {
                for (Event e : trace.events) {
                   if (e.type == Event.Type.MESSAGE_TAG && e.source == event.source && e.span == event.span) {
-                     msgTags.add(e.text);
+                     msgTags.add((String) e.payload);
                   }
                }
             }

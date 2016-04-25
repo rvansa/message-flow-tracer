@@ -22,12 +22,11 @@
 
 package org.jboss.qa.jdg.messageflow.logic;
 
-import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
-import java.io.InputStreamReader;
-import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.TimeUnit;
+import java.io.InputStream;
+import java.io.PipedInputStream;
+import java.io.PipedOutputStream;
 
 import net.schmizz.sshj.SSHClient;
 import net.schmizz.sshj.sftp.RemoteFile;
@@ -43,9 +42,10 @@ public class SFTPInput implements Input {
    private final String username;
    private SSHClient ssh;
    private SFTPClient sftp;
-   private BufferedReader reader;
    private volatile boolean run = true;
-   private final ArrayBlockingQueue<String> bufferedLines = new ArrayBlockingQueue<String>(10000);
+   private RemoteFile.RemoteFileInputStream remoteStream;
+   private PipedOutputStream bufferedOutput;
+   private PipedInputStream bufferedInput;
    private volatile IOException thrown;
    private Thread preReader;
 
@@ -66,7 +66,7 @@ public class SFTPInput implements Input {
 
    @Override
    public void open() throws IOException {
-      if (reader != null) {
+      if (remoteStream != null) {
          close();
       }
       ssh = new SSHClient();
@@ -75,21 +75,25 @@ public class SFTPInput implements Input {
       ssh.authPublickey(username);
       sftp = ssh.newSFTPClient();
       final RemoteFile remoteFile = sftp.open(file);
-      reader = new BufferedReader(new InputStreamReader(remoteFile.getInputStream()));
+      bufferedOutput = new PipedOutputStream();
+      bufferedInput = new PipedInputStream(bufferedOutput, 1024 * 1024);
+      remoteStream = remoteFile.getInputStream();
       preReader = new Thread() {
          @Override
          public void run() {
-            String line;
+            byte[] buffer = new byte[1024 * 1024];
+            int read;
             try {
-               while (run && (line = reader.readLine()) != null) {
-                  bufferedLines.add(line);
+               while (run && (read = remoteStream.read()) >= 0) {
+                  bufferedOutput.write(buffer, 0, read);
                }
             } catch (IOException e) {
                thrown = new IOException(e);
             } finally {
                try {
                   try {
-                     reader.close();
+                     remoteStream.close();
+                     bufferedOutput.close();
                   } finally {
                      try {
                         sftp.close();
@@ -100,7 +104,8 @@ public class SFTPInput implements Input {
                } catch (IOException e) {
                   thrown = new IOException(e);
                } finally {
-                  reader = null;
+                  remoteStream = null;
+                  bufferedOutput = null;
                }
             }
          }
@@ -112,18 +117,8 @@ public class SFTPInput implements Input {
    }
 
    @Override
-   public String readLine() throws IOException {
-      String line = null;
-      do {
-         try {
-            line = bufferedLines.poll(5, TimeUnit.SECONDS);
-         } catch (InterruptedException e) {
-         }
-         if (thrown != null) {
-            throw thrown;
-         }
-      } while (line == null);
-      return line;
+   public InputStream stream() throws IOException {
+      return bufferedInput;
    }
 
    @Override

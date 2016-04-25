@@ -34,12 +34,14 @@ import java.util.Set;
 import java.util.TreeSet;
 
 import org.jboss.qa.jdg.messageflow.objects.Event;
+import org.jboss.qa.jdg.messageflow.objects.MessageId;
 import org.jboss.qa.jdg.messageflow.objects.Trace;
 
 /**
 * @author Radim Vansa &lt;rvansa@redhat.com&gt;
 */
 public class PrintTrace implements Processor {
+   private static int DEFAULT_BUFFER_SIZE = 1024 * 1024;
    private SimpleDateFormat format = new SimpleDateFormat("HH:mm:ss.SSS");
    private PrintStream out = System.out;
    private long outLine = 0;
@@ -47,7 +49,7 @@ public class PrintTrace implements Processor {
    public PrintTrace(String outputFile) {
       if (outputFile.trim().equals("-")) return;
       try {
-         out = new PrintStream(new BufferedOutputStream(new FileOutputStream(outputFile)));
+         out = new PrintStream(new BufferedOutputStream(new FileOutputStream(outputFile), DEFAULT_BUFFER_SIZE));
       } catch (FileNotFoundException e) {
          System.err.println("Could not write to " + outputFile + " due to " + e);
       }
@@ -70,11 +72,11 @@ public class PrintTrace implements Processor {
                            traceCounter, trace.events.size(), trace.messages.size(), outLine);
       }
       out.printf("TRACE %d: %d msg\n", traceCounter, trace.messages.size());
-      for (String message : trace.messages) {
+      for (MessageId message : trace.messages) {
          String src = null;
          ArrayList<String> dest = new ArrayList<String>();
          for (Event e : trace.events) {
-            if (e.text == null || !e.text.equals(message)) continue;
+            if (e.payload == null || !e.payload.equals(message)) continue;
             if (e.type == Event.Type.OUTCOMING_DATA_STARTED) src = e.source;
             else if (e.type == Event.Type.MSG_PROCESSING_START) dest.add(e.source);
          }
@@ -111,6 +113,7 @@ public class PrintTrace implements Processor {
          highestGlobalDelta = Math.max(highestGlobalDelta, globalDelta > 0 ? globalDelta : -10 * globalDelta);
          prevEvent = event;
       }
+      longestThreadName = Math.min(longestThreadName, 40);
       int globalDeltaWidth = highestGlobalDelta <= 0 ? 1 : (int) Math.log10(highestGlobalDelta) + 1;
       String globalDeltaFormatString = String.format("|%%%dd ms", globalDeltaWidth);
 
@@ -124,7 +127,7 @@ public class PrintTrace implements Processor {
          if (prevEvent != null) {
             out.printf(globalDeltaFormatString, event.timestamp.getTime() - prevEvent.timestamp.getTime());
          } else {
-            out.print(pad("|", globalDeltaWidth + 4));
+            out.print(truncateOrPad("|", globalDeltaWidth + 4));
          }
          prevEvent = event;
          /* Local time delta */
@@ -154,12 +157,12 @@ public class PrintTrace implements Processor {
          out.print('|');
          out.print(event.source);
          out.print('|');
-         out.print(pad(event.threadName, longestThreadName));
+         out.print(truncateOrPad(event.threadName, longestThreadName));
          out.print('|');
          out.print(event.type);
-         if (event.text != null) {
+         if (event.payload != null) {
             out.print(' ');
-            out.print(event.text);
+            out.print(event.payload);
          }
          out.println();
       }
@@ -168,34 +171,34 @@ public class PrintTrace implements Processor {
    }
 
    private String formatNanos(long nanos) {
-      if (nanos < 100000000) {
-         if (nanos < 100000) {
-            if (nanos < 10000) {
+      if (nanos < 99_500_000) {
+         if (nanos < 99_500) {
+            if (nanos < 10_000) {
                return String.format("|%4d ns|", nanos);
             } else {
                return String.format("|%2.1f us|", ((double) nanos) / 1000d);
             }
          } else {
-            if (nanos < 10000000) {
+            if (nanos < 10_000_000) {
                return String.format("|%4d us|", nanos / 1000);
             } else {
-               return String.format("|%2.1f ms|", ((double) nanos) / 1000000d);
+               return String.format("|%2.1f ms|", ((double) nanos) / 1000_000d);
             }
          }
       } else {
-         if (nanos < 10000000000l) {
+         if (nanos < 10_000_000_000l) {
             return String.format("|%4d ms|", nanos / 1000000);
-         } else if (nanos < 100000000000l) {
-            return String.format("|%2.1f  s|", ((double) nanos) / 1000000000d);
+         } else if (nanos < 99_500_000_000l) {
+            return String.format("|%2.1f  s|", ((double) nanos) / 1000_000_000d);
          } else {
-            return String.format("|%4d  s|", nanos / 1000000000l);
+            return String.format("|%4d  s|", nanos / 1000_000_000l);
          }
       }
    }
 
-   private String pad(String str, int n) {
+   private String truncateOrPad(String str, int n) {
       StringBuilder sb = new StringBuilder(n);
-      sb.append(str);
+      sb.append(str, 0, Math.min(n, str.length()));
       for (int i = str.length(); i < n; ++i) {
          sb.append(' ');
       }

@@ -22,10 +22,11 @@
 
 package org.jboss.qa.jdg.messageflow.objects;
 
+import org.jboss.qa.jdg.messageflow.persistence.TextPersister;
+
 import java.io.*;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Queue;
@@ -39,9 +40,9 @@ import java.util.Set;
 */
 public class Span implements Serializable {
    private final transient Span parent;
-   private String incoming;
-   private List<String> outcoming;
-   private Set<LocalEvent> events = new HashSet<LocalEvent>();
+   private MessageId incoming;
+   private List<MessageId> outcoming;
+   private List<LocalEvent> events = new ArrayList<>();
    protected transient List<Span> children = new ArrayList<Span>();
 
    private int counter = 1;
@@ -50,13 +51,15 @@ public class Span implements Serializable {
 //   private static HashSet<Span> debugSpans = new HashSet<Span>();
 
    public static void debugPrintUnfinished() {
+//      System.err.println("DEBUG unfinished");
 //      synchronized (debugSpans) {
 //         for (Span span : debugSpans) {
 //            if (span.getParent() == null || !debugSpans.contains(span.getParent())) {
-//               span.writeWithChildren(System.err);
+//               span.print(System.err, "");
 //            }
 //         }
 //      }
+//      System.err.println("DEBUG unfinished end");
    }
 
    public Span() {
@@ -76,9 +79,13 @@ public class Span implements Serializable {
       }
    }
 
-   public synchronized void addOutcoming(String identifier) {
+   public MessageId getIncoming() {
+      return incoming;
+   }
+
+   public synchronized void addOutcoming(MessageId identifier) {
       if (outcoming == null) {
-         outcoming = new ArrayList<String>();
+         outcoming = new ArrayList<>();
       }
       outcoming.add(identifier);
    }
@@ -109,19 +116,23 @@ public class Span implements Serializable {
          if (counter == 0) {
             passToFinished(finishedSpans);
          } else if (counter < 0) {
-            throw new IllegalStateException();
+            ByteArrayOutputStream stream = new ByteArrayOutputStream();
+            print(new PrintStream(stream), "");
+            throw new IllegalStateException(new String(stream.toByteArray()));
          }
       }
    }
 
-   public void writeWithChildren(PrintStream out) {
+   public void print(PrintStream out, String prefix) {
       out.printf("%08x (parent %08x)", this.hashCode(), this.parent == null ? 0 : this.parent.hashCode());
-      writeTo(out, true);
-      out.println("<Begin children>");
-      for (Span s : children) {
-         s.writeWithChildren(out);
+      new TextPersister(out, prefix).write(this, true);
+      if (!children.isEmpty()) {
+         out.println(prefix + "<Begin children>");
+         for (Span s : children) {
+            s.print(out, prefix + "\t");
+         }
+         out.println(prefix + "<End children>");
       }
-      out.println("<End children>");
    }
 
     /**
@@ -129,6 +140,9 @@ public class Span implements Serializable {
      * @param finishedSpans
      */
    private void passToFinished(Queue<Span> finishedSpans) {
+//      synchronized (debugSpans) {
+//         debugSpans.remove(this);
+//      }
       if (parent != null) {
          if (parent == this) {
             throw new IllegalStateException();
@@ -140,30 +154,31 @@ public class Span implements Serializable {
             setIncoming(parent.incoming);
          }
          if (parent.outcoming != null) {
-            for (String msg : parent.outcoming) {
+            for (MessageId msg : parent.outcoming) {
                addOutcoming(msg);
             }
          }
       }
       if (children.isEmpty()) {
-         //System.err.printf("%08x finished\n", this.hashCode());
+//         System.err.printf("%08x finished\n", this.hashCode());
          finishedSpans.add(this);
       } else {
-         boolean causalChildren = false;
+//         boolean causalChildren = false;
          for (Span child : children) {
-            if (!child.isNonCausal()) {
-               causalChildren = true;
-            }
+//            if (!child.isNonCausal()) {
+//               causalChildren = true;
+//            }
             child.passToFinished(finishedSpans);
          }
-         if (!causalChildren) {
-            finishedSpans.add(this);
-         }
+//         if (!causalChildren) {
+//            finishedSpans.add(this);
+//            System.err.printf("%08x finished\n", this.hashCode());
+//         }
       }
    }
 
-   public synchronized void addEvent(Event.Type type, String text) {
-      events.add(new LocalEvent(type, text));
+   public synchronized void addEvent(Event.Type type, Object payload) {
+      events.add(new LocalEvent(type, payload));
    }
    public void addEvent(LocalEvent event){
       events.add(event);
@@ -177,7 +192,7 @@ public class Span implements Serializable {
       return nonCausal;
    }
 
-   public void setIncoming(String incoming) {
+   public void setIncoming(MessageId incoming) {
       if (this.incoming != null) {
          //throw new IllegalArgumentException("Cannot have two incoming messages!");
           System.err.println("Cannot have two incoming messages. The current incoming message is " + this.incoming);
@@ -186,103 +201,6 @@ public class Span implements Serializable {
       this.incoming = incoming;
    }
 
-   /**
-    * Writes span to output stream in binary format rather than plain text for performance improvement
-    * It uses Java serialization which is inefficient
-    * Sort is not implemented
-    * @param stream output stream
-    * @param sort not implemented
-    */
-   public synchronized void binaryWriteTo(ObjectOutputStream stream, boolean sort){
-         try {
-           stream.writeObject(this);
-         } catch (IOException e) {
-            e.printStackTrace();
-         }
-   }
-
-   /**
-    * Writes span to output stream in binary format rather than plain text for performance improvement
-    * @param stream output stream
-    * @param sort whether to sort events
-    */
-   public synchronized void binaryWriteTo(DataOutputStream stream, boolean sort){
-
-      try {
-         stream.writeBoolean(isNonCausal());
-         if (incoming != null){
-            stream.writeUTF(incoming);
-         }else{
-            stream.writeUTF("");
-         }
-
-         int outcommingCount = outcoming != null ? outcoming.size() : 0;
-         stream.writeShort(outcommingCount);
-         if (outcoming != null){
-            for (String message : outcoming){
-               stream.writeUTF(message);
-            }
-         }
-         int eventCount = events != null ? events.size() : 0;
-         stream.writeShort(eventCount);
-         if (events != null){
-            Collection<LocalEvent> events = this.events;
-            if (sort) {
-               LocalEvent[] array = events.toArray(new LocalEvent[events.size()]);
-               Arrays.sort(array);
-               events = Arrays.asList(array);
-            }
-            for (LocalEvent event : events){
-               stream.writeLong(event.timestamp);
-               stream.writeUTF(event.threadName);
-               stream.writeShort(event.type.ordinal());
-               stream.writeUTF(event.text == null ? "" : event.text);
-            }
-
-         }
-
-      } catch (IOException e) {
-         e.printStackTrace();
-      }
-   }
-   /**
-    * Writes span to output stream in text format.
-    * @param stream output stream
-    * @param sort whether to sort events
-    */
-   public synchronized void writeTo(PrintStream stream, boolean sort) {
-      if (isNonCausal()) {
-         stream.print(Trace.NON_CAUSAL);
-      } else {
-         stream.print(Trace.SPAN);
-      }
-      stream.print(';');
-      stream.print(incoming);
-      if (outcoming != null) {
-         for (String msg : outcoming) {
-            stream.print(';');
-            stream.print(msg);
-         }
-      }
-      stream.println();
-      Collection<LocalEvent> events = this.events;
-      if (sort) {
-         LocalEvent[] array = events.toArray(new LocalEvent[events.size()]);
-         Arrays.sort(array);
-         events = Arrays.asList(array);
-      }
-      for (LocalEvent evt : events) {
-         stream.print(Trace.EVENT);
-         stream.print(';');
-         stream.print(evt.timestamp);
-         stream.print(';');
-         stream.print(evt.threadName);
-         stream.print(';');
-         stream.print(evt.type);
-         stream.print(';');
-         stream.println(evt.text == null ? "" : evt.text);
-      }
-   }
 
    public Span getParent() {
       return parent;
@@ -296,15 +214,15 @@ public class Span implements Serializable {
             lastTag = event;
          }
       }
-      return lastTag == null ? null : lastTag.text;
+      return lastTag == null ? null : String.valueOf(lastTag.payload);
    }
 
-   public Set<String> getMessages() {
-      Set<String> messages = new HashSet<>();
+   public Set<MessageId> getMessages() {
+      Set<MessageId> messages = new HashSet<>();
       if (incoming != null)
          messages.add(incoming);
       if (outcoming != null){
-         for (String msg : outcoming) {
+         for (MessageId msg : outcoming) {
             if (outcoming != null)
                messages.add(msg);
          }
@@ -312,15 +230,15 @@ public class Span implements Serializable {
       return messages;
    }
 
-   public Set<LocalEvent> getEvents() {
-      return events;
-   }
+//   public Set<LocalEvent> getEvents() {
+//      return events;
+//   }
 
    /* Debugging only */
    public String getTraceTag() {
       for (LocalEvent event : events) {
          if (event.type == Event.Type.TRACE_TAG) {
-            return event.text;
+            return String.valueOf(event.payload);
          }
       }
       return "-no-trace-tag-";
@@ -329,13 +247,14 @@ public class Span implements Serializable {
    public Span getCurrent() {
       return this;
    }
+
    @Override
    public String toString(){
       StringBuilder sb = new StringBuilder();
       sb.append(nonCausal ? "SPAN: nonCasual" : "SPAN: casual");
       sb.append(" Incoming: " + incoming);
       if (outcoming != null){
-         for (String message : outcoming){
+         for (MessageId message : outcoming){
             sb.append(" Outcomming: " + message);
          }
       }
@@ -347,26 +266,48 @@ public class Span implements Serializable {
             sb.append(" timestamp: " + event.timestamp);
             sb.append(" threadName: " + event.threadName);
             sb.append(" type: " + event.type);
-            sb.append(" text: " + event.text);
+            sb.append(" payload: " + event.payload);
             sb.append(System.lineSeparator());
          }
       }
 
       return sb.toString();
    }
+
+   public List<LocalEvent> getEvents() {
+      return events;
+   }
+
+   public List<MessageId> getOutcoming() {
+      return outcoming;
+   }
+
+   public List<LocalEvent> getSortedEvents() {
+      Span.LocalEvent[] array = events.toArray(new Span.LocalEvent[events.size()]);
+      Arrays.sort(array);
+      return Arrays.asList(array);
+   }
+
    public static class LocalEvent implements Comparable<LocalEvent>, Serializable {
       public long timestamp;
       public String threadName;
       public Event.Type type;
-      public String text;
-
+      public Object payload;
 
       public LocalEvent(){};
-      private LocalEvent(Event.Type type, String text) {
+
+      public LocalEvent(long timestamp, String threadName, Event.Type type, Object payload) {
+         this.timestamp = timestamp;
+         this.threadName = threadName;
+         this.type = type;
+         this.payload = payload;
+      }
+
+      private LocalEvent(Event.Type type, Object payload) {
          this.timestamp = System.nanoTime();
          this.threadName = Thread.currentThread().getName();
          this.type = type;
-         this.text = text;
+         this.payload = payload;
       }
 
       //@Override

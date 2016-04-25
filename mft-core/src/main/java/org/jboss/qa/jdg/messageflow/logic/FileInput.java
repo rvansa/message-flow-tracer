@@ -22,17 +22,19 @@
 
 package org.jboss.qa.jdg.messageflow.logic;
 
-import java.io.BufferedReader;
+import java.io.BufferedInputStream;
 import java.io.File;
-import java.io.FileReader;
+import java.io.FileInputStream;
 import java.io.IOException;
+import java.io.InputStream;
 
 /**
  * @author Radim Vansa &lt;rvansa@redhat.com&gt;
  */
 public class FileInput implements Input {
+   private static int DEFAULT_BUFFER_SIZE = 1024 * 1024;
    private String filename;
-   private BufferedReader reader;
+   private InputStream stream;
 
    public FileInput(String filename) {
       this.filename = filename;
@@ -40,13 +42,13 @@ public class FileInput implements Input {
 
    @Override
    public void open() throws IOException {
-      if (reader != null) close();
-      reader = new BufferedReader(new FileReader(filename));
+      if (stream != null) close();
+      stream = new BufferedInputStream(new FileInputStream(filename), DEFAULT_BUFFER_SIZE);
    }
 
    @Override
-   public String readLine() throws IOException {
-      return reader.readLine();
+   public InputStream stream() throws IOException {
+      return stream;
    }
 
    @Override
@@ -57,9 +59,9 @@ public class FileInput implements Input {
    @Override
    public void close() throws IOException {
       try {
-         reader.close();
+         stream.close();
       } finally {
-         reader = null;
+         stream = null;
       }
    }
 

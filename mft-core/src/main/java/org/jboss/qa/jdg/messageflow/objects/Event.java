@@ -72,7 +72,7 @@ public class Event {
          }
       }
 
-      static Type get(String name) {
+      public static Type get(String name) {
          return nameToEnum.get(name);
       }
    }
@@ -86,19 +86,18 @@ public class Event {
    public int span;
    public String threadName;
    public Type type;
-   public String text;
-   //public DagVertex causalOrder = null;
+   public Object payload;
    public long correctedTimestamp = 0;
 
-   public Event(long originNanoTime, long originUnixTime, long nanoTime, String source, int span, String threadName, String type, String text) {
-      this.type = Type.get(type);
+   public Event(long originNanoTime, long originUnixTime, long nanoTime, String source, int span, String threadName, Type type, Object payload) {
+      this.type = type;
       this.timestamp = new Date((nanoTime - originNanoTime) / 1000000 + originUnixTime);
       this.roundingError = (nanoTime - originNanoTime) % 1000000;
       this.nanoTime = nanoTime;
       this.source = source;
       this.span = span;
-      this.threadName = threadName;//fromDictionary(threadName);
-      this.text = text;//fromDictionary(message);
+      this.threadName = threadName.intern();
+      this.payload = payload;
    }
 
    public static class GlobalTimestampComparator implements Comparator<Event> {
@@ -124,6 +123,6 @@ public class Event {
 
    @Override
    public String toString() {
-      return String.format("%s|%s|%s|%s|%s", FORMAT.format(timestamp), source, threadName, type, text);
+      return String.format("%s|%s|%s|%s|%s", FORMAT.format(timestamp), source, threadName, type, payload);
    }
 }

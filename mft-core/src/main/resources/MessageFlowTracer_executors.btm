@@ -1,0 +1,131 @@
+HELPER org.jboss.qa.jdg.messageflow.Tracer
+
+RULE TPE_execute
+CLASS ^java.util.concurrent.ThreadPoolExecutor
+METHOD execute
+AT ENTRY
+IF TRUE
+DO
+  threadHandoverStarted($1);
+ENDRULE
+
+RULE TPE_execute_exit
+CLASS ^java.util.concurrent.ThreadPoolExecutor
+METHOD execute
+AT EXIT
+IF TRUE
+DO
+  threadHandoverCompleted();
+ENDRULE
+
+RULE Runnable_run
+INTERFACE ^java.lang.Runnable
+METHOD run
+# Byteman does checkcast of $0 to actual type which is often private
+NOCOMPILE
+AT ENTRY
+IF TRUE
+DO
+  threadHandoverSuccess($0);
+ENDRULE
+
+RULE Runnable_run_exit
+INTERFACE ^java.lang.Runnable
+METHOD run
+AT EXIT
+IF TRUE
+DO
+  threadProcessingCompleted();
+ENDRULE
+
+RULE taskRejected
+CLASS ^java.util.concurrent.ThreadPoolExecutor
+METHOD reject
+AT INVOKE java.util.concurrent.RejectedExecutionHandler.rejectedExecution
+IF TRUE
+DO
+  threadHandoverFailure($1);
+ENDRULE
+
+RULE STPE_delayedExecute
+CLASS ^java.util.concurrent.ScheduledThreadPoolExecutor
+METHOD delayedExecute
+AT ENTRY
+IF TRUE
+DO
+  threadHandoverStarted($1);
+ENDRULE
+
+RULE STPE_delayedExecute_exit
+CLASS ^java.util.concurrent.ScheduledThreadPoolExecutor
+METHOD delayedExecute
+AT EXIT
+IF TRUE
+DO
+  threadHandoverCompleted();
+ENDRULE
+
+RULE STPE_future_cancel
+INTERFACE ^java.util.concurrent.RunnableScheduledFuture
+METHOD cancel
+NOCOMPILE
+AT ENTRY
+# TODO: this is not thread-safe
+IF !$0.isDone()
+DO
+  threadHandoverFailure($0);
+ENDRULE
+
+RULE FJB_externalPush
+CLASS ^java.util.concurrent.ForkJoinPool
+METHOD externalPush
+AT ENTRY
+IF TRUE
+DO
+  threadHandoverStarted($1);
+ENDRULE
+
+RULE FJB_externalPush_exit
+CLASS ^java.util.concurrent.ForkJoinPool
+METHOD externalPush
+AT EXIT
+IF TRUE
+DO
+  threadHandoverCompleted();
+ENDRULE
+
+#RULE FJB_externalPush_throws
+#CLASS ^java.util.concurrent.ForkJoinPool
+#METHOD externalPush
+##AT EXCEPTIONAL EXIT
+#IF TRUE
+#DO
+#  threadHandoverFailure($1);
+#ENDRULE
+
+RULE FJT_exec
+CLASS ^java.util.concurrent.ForkJoinTask
+METHOD exec
+AT ENTRY
+IF TRUE
+DO
+  threadHandoverSuccess($0);
+ENDRULE
+
+RULE FJT_exec_exit
+CLASS ^java.util.concurrent.ForkJoinTask
+METHOD exec
+AT EXIT
+IF TRUE
+DO
+  threadProcessingCompleted();
+ENDRULE
+
+#RULE FJT_exec_throws
+#CLASS ^java.util.concurrent.ForkJoinTask
+#METHOD exec
+##AT EXCEPTIONAL EXIT
+#IF TRUE
+#DO
+#  threadProcessingCompleted();
+#ENDRULE

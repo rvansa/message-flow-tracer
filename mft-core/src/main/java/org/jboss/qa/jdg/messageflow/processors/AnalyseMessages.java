@@ -30,6 +30,7 @@ import java.util.Map;
 import java.util.TreeMap;
 
 import org.jboss.qa.jdg.messageflow.objects.Event;
+import org.jboss.qa.jdg.messageflow.objects.MessageId;
 import org.jboss.qa.jdg.messageflow.objects.Trace;
 
 /**
@@ -160,13 +161,13 @@ public class AnalyseMessages implements Processor {
 
    @Override
    public void process(Trace trace, long traceCounter) {
-      for (String message : trace.messages) {
+      for (MessageId message : trace.messages) {
          ArrayList<Event> sent = new ArrayList<Event>();
          Map<String, ArrayList<Event>> incoming = new HashMap<String, ArrayList<Event>>();
          Map<String, TaggedStats> stats = new HashMap<String, TaggedStats>();
          // iterating in the time order
          for (Event event : trace.events) {
-            if (event.text == null || !event.text.equals(message)) continue;
+            if (event.payload == null || !event.payload.equals(message)) continue;
             if (event.type == Event.Type.OUTCOMING_DATA_STARTED || event.type == Event.Type.RETRANSMISSION) {
                sent.add(event);
             } else if (event.type == Event.Type.MSG_PROCESSING_START || event.type == Event.Type.DISCARD) {
@@ -188,7 +189,7 @@ public class AnalyseMessages implements Processor {
             stats.put(NO_TAG, getTaggedStats(NO_TAG));
          }
          for (Event event : trace.events) {
-            if (event.text == null || !event.text.equals(message)) continue;
+            if (event.payload == null || !event.payload.equals(message)) continue;
             if (event.type == Event.Type.MSG_PROCESSING_START) {
                Event rx = findIncoming(trace.events, event.source, event.span);
                for (TaggedStats ts : stats.values()) {
@@ -268,8 +269,8 @@ public class AnalyseMessages implements Processor {
       Map<String, TaggedStats> tags = new HashMap<String, TaggedStats>();
       for (Event event : events) {
          if (event.source == source && event.span == span && event.type == Event.Type.MESSAGE_TAG) {
-            TaggedStats stats = getTaggedStats(event.text);
-            tags.put(event.text, stats);
+            TaggedStats stats = getTaggedStats((String) event.payload);
+            tags.put((String) event.payload, stats);
          }
       }
       return tags;
@@ -295,7 +296,7 @@ public class AnalyseMessages implements Processor {
 
    private Event findSent(Collection<Event> events, String message) {
       for (Event event : events) {
-         if (event.type == Event.Type.OUTCOMING_DATA_STARTED && event.text.equals(message)) {
+         if (event.type == Event.Type.OUTCOMING_DATA_STARTED && event.payload.equals(message)) {
             return event;
          }
       }

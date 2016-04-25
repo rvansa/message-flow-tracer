@@ -24,12 +24,13 @@ package org.jboss.qa.jdg.messageflow.logic;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.io.InputStream;
 
 /**
  * @author Radim Vansa &lt;rvansa@redhat.com&gt;
  */
 public interface Input extends Closeable {
    void open() throws IOException;
-   String readLine() throws IOException;
    String shortName();
+   InputStream stream() throws IOException;
 }

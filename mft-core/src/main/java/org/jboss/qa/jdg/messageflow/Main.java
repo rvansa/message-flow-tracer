@@ -30,7 +30,7 @@ import org.jboss.qa.jdg.messageflow.processors.AnalyseInterceptors;
 import org.jboss.qa.jdg.messageflow.processors.AnalyseLocks;
 import org.jboss.qa.jdg.messageflow.processors.AnalyseMessages;
 import org.jboss.qa.jdg.messageflow.processors.AnalyseTraces;
-import org.jboss.qa.jdg.messageflow.processors.CutProcessor;
+import org.jboss.qa.jdg.messageflow.processors.Filters;
 import org.jboss.qa.jdg.messageflow.processors.PrintTrace;
 
 /**
@@ -53,13 +53,19 @@ public class Main {
                return;
             }
             composer.addProcessor(new PrintTrace(args[++i]));
-         } else if (args[i].equals("-m")) {
+         } else if (args[i].equals("-f")) {
+            if (i + 1 >= args.length) {
+               printUsage();
+               return;
+            }
+            composer.addFilter(Filters.parse(args[++i]));
+         } else if (args[i].equals("-am")) {
             composer.addProcessor(new AnalyseMessages());
-         } else if (args[i].equals("-l")) {
+         } else if (args[i].equals("-al")) {
             composer.addProcessor(new AnalyseLocks());
-         } else if (args[i].equals("-t")) {
+         } else if (args[i].equals("-at")) {
             composer.addProcessor(new AnalyseTraces());
-         } else if (args[i].equals("-i")) {
+         } else if (args[i].equals("-ai")) {
             composer.addProcessor(new AnalyseInterceptors());
          } else if (args[i].equals("-a")) {
             composer.addProcessor(new AnalyseMessages());
@@ -68,12 +74,6 @@ public class Main {
             composer.addProcessor(new AnalyseInterceptors());
          } else if (args[i].equals("-z")) {
             composer.setSortCausally(false);
-         } else if (args[i].equals("-c")) {
-            if (i + 2 >= args.length) {
-               printUsage();
-               return;
-            }
-            composer.addProcessor(new CutProcessor(args[++i], args[++i]));
          } else if (args[i].equals("-d")) {
             if (i + 1 > args.length) {
                printUsage();
@@ -81,9 +81,20 @@ public class Main {
             }
             composer.setMaxAdvanceMillis(Long.parseLong(args[++i]));
          } else if (args[i].equals("-b")) {
-            Composer.binarySpans = true;
-         }
-         else if (args[i].startsWith("-")) {
+            composer.setBinarySpans(true);
+         } else if (args[i].equals("-mm")) {
+            if (i + 1 > args.length) {
+               printUsage();
+               return;
+            }
+            composer.setMaxMessages(Long.parseLong(args[++i]));
+         } else if (args[i].equals("-mt")) {
+            if (i + 1 > args.length) {
+               printUsage();
+               return;
+            }
+            composer.setMaxTraces(Long.parseLong(args[++i]));
+         } else if (args[i].startsWith("-")) {
             System.err.println("Unknown option " + args[i]);
             printUsage();
             return;
@@ -94,6 +105,11 @@ public class Main {
       if (composer.getProcessors().isEmpty()) {
          composer.addProcessor(new PrintTrace());
       }
+      if (i == args.length) {
+         System.err.println("No span logs to process!");
+         printUsage();
+         return;
+      }
       for (; i < args.length; ++i) {
          for (Input input : InputFactory.create(args[i]))
          logic.addInput(input);
@@ -102,17 +118,20 @@ public class Main {
    }
 
    private static void printUsage() {
-      System.err.println("Usage [-r] [([-m] [-l] [-t] | -a)] [-p trace_log] [-c dir message] span_logs...");
+      System.err.println("Usage [-r] [([-am] [-al] [-at] [-ai] | -a)] [-p trace_log] [-c dir message] [-f filter_name:arguments] span_logs...");
       System.err.println("\t-r             \tReport memory usage");
       System.err.println("\t-p trace_log   \tPrint log of traces");
       System.err.println("\t-z             \tThe ordering of events in trace log should be based only on timestamps (not causally)");
-      System.err.println("\t-m             \tAnalyze messages");
-      System.err.println("\t-l             \tAnalyze locks");
-      System.err.println("\t-t             \tAnalyze traces");
-      System.err.println("\t-i             \tAnalyze interceptors");
-      System.err.println("\t-b             \tBinary spans");
+      System.err.println("\t-am            \tAnalyze messages");
+      System.err.println("\t-al            \tAnalyze locks");
+      System.err.println("\t-at            \tAnalyze traces");
+      System.err.println("\t-ai            \tAnalyze interceptors");
+      System.err.println("\t-b             \tProcess spans in binary format");
       System.err.println("\t-a             \tPrints log of traces and runs all available analyses");
-      System.err.println("\t-c dir message \tWrite spans participating on trace with the message to the dir");
       System.err.println("\t-d milliseconds\tMaximum difference between highest processed timestamp in second-pass threads");
+      System.err.println("\t-mm N          \tStop second-pass processing after consuming N messages");
+      System.err.println("\t-mt N          \tStop second-pass processing after consuming N traces");
+      System.err.println("\t-f filter:args \tFilter printed traces. Available filters: ");
+      Filters.printUsage();
    }
 }

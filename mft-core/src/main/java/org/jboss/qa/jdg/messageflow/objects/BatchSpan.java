@@ -33,8 +33,8 @@ import java.util.Map;
  */
 public class BatchSpan extends Span {
 
-   private Map<String, Span> childrenMap = new HashMap<String, Span>();
-   private ThreadLocal<String> currentMessage = new ThreadLocal<String>();
+   private Map<MessageId, Span> childrenMap = new HashMap<>();
+   private ThreadLocal<MessageId> currentMessage = new ThreadLocal<>();
    private Span suppressed;
 
    private BatchSpan() {}
@@ -49,9 +49,9 @@ public class BatchSpan extends Span {
      * @param messageIds
      * @return
      */
-   public static BatchSpan newChild(Span parent, List<String> messageIds) {
+   public static BatchSpan newChild(Span parent, List<MessageId> messageIds) {
       BatchSpan batchSpan = new BatchSpan(parent);
-      for (String msg : messageIds) {
+      for (MessageId msg : messageIds) {
          Span child = new Span(batchSpan);
          child.addEvent(Event.Type.CONTAINS, msg);
          child.setIncoming(msg);
@@ -71,7 +71,7 @@ public class BatchSpan extends Span {
       return batchSpan;
    }
 
-   public void push(String message) {
+   public void push(MessageId message) {
       currentMessage.set(message);
       addEvent(Event.Type.MSG_PROCESSING_START, message);
    }
@@ -87,7 +87,7 @@ public class BatchSpan extends Span {
 
    @Override
    public Span getCurrent() {
-      String currentMessage = this.currentMessage.get();
+      MessageId currentMessage = this.currentMessage.get();
       if (currentMessage == null) {
          return this;
       } else {
@@ -96,8 +96,8 @@ public class BatchSpan extends Span {
    }
 
    @Override
-   public void addOutcoming(String identifier) {
-      String currentMessage = this.currentMessage.get();
+   public void addOutcoming(MessageId identifier) {
+      MessageId currentMessage = this.currentMessage.get();
       if (currentMessage == null) {
          super.addOutcoming(identifier);
       } else {
@@ -106,18 +106,18 @@ public class BatchSpan extends Span {
    }
 
    @Override
-   public void addEvent(Event.Type type, String text) {
-      String currentMessage = this.currentMessage.get();
+   public void addEvent(Event.Type type, Object payload) {
+      MessageId currentMessage = this.currentMessage.get();
       if (currentMessage == null) {
-         super.addEvent(type, text);
+         super.addEvent(type, payload);
       } else {
-         getChild(currentMessage).addEvent(type, text);
+         getChild(currentMessage).addEvent(type, payload);
       }
    }
 
    @Override
    public void setNonCausal() {
-      String currentMessage = this.currentMessage.get();
+      MessageId currentMessage = this.currentMessage.get();
       if (currentMessage == null) {
          super.setNonCausal();
       } else {
@@ -125,7 +125,7 @@ public class BatchSpan extends Span {
       }
    }
 
-   private synchronized Span getChild(String msg) {
+   private synchronized Span getChild(MessageId msg) {
       Span child = childrenMap.get(msg);
       if (child == null) {
          child = new Span(this);

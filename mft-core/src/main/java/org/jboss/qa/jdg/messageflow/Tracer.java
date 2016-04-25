@@ -24,15 +24,16 @@ package org.jboss.qa.jdg.messageflow;
 
 import org.jboss.qa.jdg.messageflow.objects.BatchSpan;
 import org.jboss.qa.jdg.messageflow.objects.Event;
+import org.jboss.qa.jdg.messageflow.objects.MessageId;
 import org.jboss.qa.jdg.messageflow.objects.Span;
+import org.jboss.qa.jdg.messageflow.persistence.BinaryPersister;
+import org.jboss.qa.jdg.messageflow.persistence.Persister;
+import org.jboss.qa.jdg.messageflow.persistence.TextPersister;
 
-import java.io.BufferedOutputStream;
 import java.io.File;
-import java.io.FileNotFoundException;
-import java.io.FileOutputStream;
 import java.io.IOException;
-import java.io.PrintStream;
-import java.io.*;
+import java.nio.file.Paths;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -49,11 +50,16 @@ public class Tracer {
    private static ConcurrentHashMap<Object, Span> spans = new ConcurrentHashMap<Object, Span>();
    private static ConcurrentHashMap<Object, AtomicInteger> referenceCounters = new ConcurrentHashMap<Object, AtomicInteger>();
    private static ConcurrentLinkedQueue<Span> finishedSpans = new ConcurrentLinkedQueue<Span>();
+   private static final boolean logAnnotations = Boolean.getBoolean("org.jboss.qa.messageflowtracer.logAnnotations");
 
-   private static ThreadLocal<Span> contextSpan = new ThreadLocal<Span>();
-   private static ThreadLocal<Integer> contextCounter = new ThreadLocal<Integer>();
-   private static ThreadLocal<Boolean> contextManaged = new ThreadLocal<Boolean>();
-   private static ThreadLocal<String> contextMark = new ThreadLocal<String>();
+   private static ThreadLocal<Context> context = new ThreadLocal<>();
+
+   private static class Context {
+      Span span;
+      int counter;
+      boolean managed;
+      String mark;
+   }
 
    private static ConcurrentHashMap<Object, String> markedObjects = new ConcurrentHashMap<Object, String>();
 
@@ -64,71 +70,46 @@ public class Tracer {
          @Override
          public void run() {
             String path = System.getProperty("org.jboss.qa.messageflowtracer.output");
-            if (path == null) try {
-               path = File.createTempFile("span.", ".txt", new File(System.getProperty("org.jboss.qa.messageflowtracer.outputdir", "/tmp"))).getAbsolutePath();
-            } catch (IOException e) {
-               path = "/tmp/span.txt";
-            }
-            boolean binarySpans = System.getProperty("org.jboss.qa.messageflowtracer.binarySpans") != null ? true : false;
-
-            if (binarySpans){
-                  //without java serialization
-                  DataOutputStream dOStream = null;
-
+            if (path == null) {
+               String suffixProperty = System.getProperty("org.jboss.qa.messageflowtracer.suffix.property");
+               String suffix = suffixProperty == null ? null : System.getProperty(suffixProperty);
+               String dir = System.getProperty("org.jboss.qa.messageflowtracer.outputdir", "/tmp");
+               if (suffix != null) {
+                  path = Paths.get(dir, "span." + suffix + ".txt").toString();
+               } else {
                   try {
-                     dOStream = new DataOutputStream(new BufferedOutputStream(new FileOutputStream(path)));
-
-                     dOStream.writeLong(System.nanoTime());
-                     dOStream.writeLong(System.currentTimeMillis());
-
-                     while (running || !finishedSpans.isEmpty()) {
-                        Span span;
-                        while ((span = finishedSpans.poll()) != null) {
-                           span.binaryWriteTo(dOStream, false);
-                        }
-                        try {
-                           Thread.sleep(10);
-                        } catch (InterruptedException e) {
-                           break;
-                        }
-                     }
+                     path = File.createTempFile("span.", ".txt", new File(dir)).getAbsolutePath();
                   } catch (IOException e) {
-                     e.printStackTrace();
-                  } finally {
-                     if (dOStream != null) {
-                        try {
-                           dOStream.close();
-                        } catch (IOException e) {
-                           e.printStackTrace();
-                        }
-                     }
-                     synchronized (Tracer.class) {
-                        Tracer.class.notifyAll();
-                     }
-                  }
-            } else {
-               PrintStream writer = null;
-               try {
-                  writer = new PrintStream(new BufferedOutputStream(new FileOutputStream(path)));
-                  writer.printf("%d=%d\n", System.nanoTime(), System.currentTimeMillis());
-                  while (running || !finishedSpans.isEmpty()) {
-                     Span span;
-                     while ((span = finishedSpans.poll()) != null) {
-                        span.writeTo(writer, false);
-                     }
-                     try {
-                        Thread.sleep(10);
-                     } catch (InterruptedException e) {
-                        break;
-                     }
-                  }
-               } catch (FileNotFoundException e) {
-               } finally {
-                  if (writer != null) writer.close();
-                  synchronized (Tracer.class) {
-                     Tracer.class.notifyAll();
+                     path = "/tmp/span.txt";
                   }
                }
+            }
+            boolean binarySpans = System.getProperty("org.jboss.qa.messageflowtracer.binarySpans") != null ? true : false;
+            Persister persister = binarySpans ? new BinaryPersister() : new TextPersister();
+            try {
+               persister.open(path, System.nanoTime(), System.currentTimeMillis());
+               while (running || !finishedSpans.isEmpty()) {
+                  Span span;
+                  while ((span = finishedSpans.poll()) != null) {
+                     persister.write(span, false);
+                  }
+                  try {
+                     Thread.sleep(10);
+                  } catch (InterruptedException e) {
+                     break;
+                  }
+               }
+            } catch (IOException e) {
+               e.printStackTrace();
+            } finally {
+               try {
+                  persister.close();
+               } catch (IOException e) {
+                  e.printStackTrace();
+               }
+            }
+            synchronized (Tracer.class) {
+               Tracer.class.notifyAll();
             }
          }
       };
@@ -158,7 +139,7 @@ public class Tracer {
             for (Map.Entry<Object, Span> entry : spans.entrySet()) {
                System.out.printf("%s:%08x (refcount=%s) -> ", entry.getKey().getClass().getName(),
                                  entry.getKey().hashCode(), referenceCounters.get(entry.getKey()));
-               entry.getValue().writeWithChildren(System.out);
+               entry.getValue().print(System.out, "");
                if (++counter > 500) break; // shutdown hook must execute quickly
             }
             if (counter > 500) {
@@ -186,29 +167,37 @@ public class Tracer {
     */
    public void createManagedContext() {
       // destroy any pending context first
-      Span span = contextSpan.get();
-      if (span != null) {
-         span.decrementRefCount(finishedSpans);
-         contextSpan.remove();
+      Context context = this.context.get();
+      if (context != null) {
+         if (context.span != null) {
+            context.span.decrementRefCount(finishedSpans);
+            context = null;
+         }
+      } else {
+         this.context.set(context = new Context());
       }
-      contextManaged.set(true);
+      context.managed = true;
    }
 
    /**
     * User exit from control flow
     */
    public void destroyManagedContext() {
-      Span span = contextSpan.get();
-      if (span != null) {
-         span.decrementRefCount(finishedSpans);
-         contextSpan.remove();
+      Context context = this.context.get();
+      if (context == null) {
+         return;
       }
-      contextManaged.remove();
+      if (context.span != null) {
+         context.span.decrementRefCount(finishedSpans);
+         context.span = null;
+      }
+      context.managed = false;
    }
 
    public void incomingData(int length) {
-      ensureSpan().addEvent(Event.Type.INCOMING_DATA, length + " b");
-      contextManaged.set(true);
+      Context context = ensureContextSpan();
+      context.span.addEvent(Event.Type.INCOMING_DATA, length + " b");
+      context.managed = true;
    }
 
    /**
@@ -218,15 +207,18 @@ public class Tracer {
     */
    public void threadHandoverStarted(Object annotation) {
       incrementRefCount(annotation);
-      Span span = ensureSpan();
-      Span current = span.getCurrent();
+      Context context = ensureContextSpan();
+      Span current = context.span.getCurrent();
       Span prev = spans.putIfAbsent(annotation, current);
       if (prev != null && prev != current) {
          throw new IllegalStateException();
       }
-      span.incrementRefCount();
-      span.addEvent(Event.Type.THREAD_HANDOVER_STARTED, null);
-      //span.addEvent(Event.Type.THREAD_HANDOVER_STARTED, String.format("%s:%08x", annotation.getClass().getName(), annotation.hashCode()));
+      context.span.incrementRefCount();
+      context.span.addEvent(Event.Type.THREAD_HANDOVER_STARTED, logAnnotation(annotation));
+   }
+
+   public String logAnnotation(Object annotation) {
+      return logAnnotations ? String.format("%s:%08x", annotation.getClass().getName(), annotation.hashCode()) : null;
    }
 
    /**
@@ -235,34 +227,32 @@ public class Tracer {
     * the context is unmanaged.
     */
    public void threadHandoverCompleted() {
-      Boolean managed = contextManaged.get();
-      if (managed != null) {
+      Context context = this.context.get();
+      if (context.managed) {
          return;
       }
-      Span span = contextSpan.get();
-      if (span == null) {
+      if (context.span == null) {
          return;
       }
-      span.decrementRefCount(finishedSpans);
-      contextSpan.remove();
+      context.span.decrementRefCount(finishedSpans);
+      context.span = null;
    }
 
    /**
     * The control flow has returned to the point where the thread started processing this message
     */
    public void threadProcessingCompleted() {
-      Span span = contextSpan.get();
-      if (span == null) {
+      Context context = this.context.get();
+      if (context == null || context.span == null) {
          return;
       }
-      Integer localCount = contextCounter.get();
-      if (localCount != null) {
-         contextCounter.set(localCount == 1 ? null : localCount - 1);
+      if (context.counter > 0) {
+         --context.counter;
       } else {
-         span.addEvent(Event.Type.THREAD_PROCESSING_COMPLETE, null);
-         span.decrementRefCount(finishedSpans);
-         contextSpan.remove();
-         contextManaged.remove();
+         context.span.addEvent(Event.Type.THREAD_PROCESSING_COMPLETE, null);
+         context.span.decrementRefCount(finishedSpans);
+         context.span = null;
+         context.managed = false;
       }
    }
 
@@ -271,24 +261,26 @@ public class Tracer {
     * @param annotation
     */
    public void threadHandoverSuccess(Object annotation) {
-      Span span = contextSpan.get();
-      if (span != null) {
-         // we are in Runnable.run() executed directly in thread which already has context
-         // which will be followed by threadProcessingComplete()
-         Integer localCount = contextCounter.get();
-         contextCounter.set(localCount == null ? 1 : localCount + 1);
-         return;
+      Context context = this.context.get();
+      if (context != null) {
+         if (context.span != null) {
+            // we are in Runnable.run() executed directly in thread which already has context
+            // which will be followed by threadProcessingComplete()
+            ++context.counter;
+            return;
+         }
       } else {
-         span = decrementRefCount(annotation);
+         this.context.set(context = new Context());
       }
-      if (span == null) {
+
+      context.span = decrementRefCount(annotation);
+      if (context.span == null) {
          //debug(String.format("No span for %s:%08x", annotation.getClass().getName(), annotation.hashCode()));
          return;
       }
-      span.addEvent(Event.Type.THREAD_HANDOVER_SUCCESS, null);
-      //span.addEvent(Event.Type.THREAD_HANDOVER_SUCCESS, String.format("%s:%08x", annotation.getClass().getName(), annotation.hashCode()));
-      contextSpan.set(span);
-      contextManaged.set(true);
+//      span.addEvent(Event.Type.THREAD_HANDOVER_SUCCESS, null);
+      context.span.addEvent(Event.Type.THREAD_HANDOVER_SUCCESS, logAnnotation(annotation));
+      context.managed = true;
    }
 
    public void threadHandoverFailure(Object annotation) {
@@ -296,137 +288,130 @@ public class Tracer {
       if (span == null) {
          return;
       }
-      span.addEvent(Event.Type.THREAD_HANDOVER_FAILURE, null);
-      //span.addEvent(Event.Type.THREAD_HANDOVER_FAILURE, String.format("%s:%08x", annotation.getClass().getName(), annotation.hashCode()));
+//      span.addEvent(Event.Type.THREAD_HANDOVER_FAILURE, null);
+      span.addEvent(Event.Type.THREAD_HANDOVER_FAILURE, logAnnotation(annotation));
       span.decrementRefCount(finishedSpans);
    }
 
+   /**
+    * Forked span separates unrelated flows, while BatchSpan multiplexes processing that affects all child spans.
+    */
    public void forkSpan() {
-      Span current = contextSpan.get();
+      Context context = this.context.get();
 
-       //This might be wrongly inserted in Byteman rules
-       if (current == null){
-           System.err.println("Possible problem with the rules: Invoking \"forkSpan\" with empty contextSpan");
-           return;
-       }
-      Span child = new Span(current);
-      contextSpan.set(child);
+      //This might be wrongly inserted in Byteman rules
+      if (context == null || context.span == null) {
+         System.err.println(Thread.currentThread().getName() + "Possible problem with the rules: Invoking \"forkSpan\" with empty contextSpan");
+         new Throwable().fillInStackTrace().printStackTrace();
+         return;
+      }
+      context.span = new Span(context.span);
       //System.err.printf("%s start %08x %08x -> %08x\n", Thread.currentThread().getName(), contextAnnotation.get().hashCode(), current.hashCode(), child.hashCode());
    }
 
    public void unforkSpan() {
-      switchToParent();
+      switchToParent(this.context.get());
       //System.err.printf("%s finish %08x %08x -> %08x\n", Thread.currentThread().getName(), contextAnnotation.get().hashCode(), current.hashCode(), current.getParent().hashCode());
    }
 
    public BatchSpan startNewBatch() {
-      Span current = contextSpan.get();
+      Context context = this.context.get();
 
-      BatchSpan batchSpan = BatchSpan.newOrphan(current);
-      contextSpan.set(batchSpan);
+      BatchSpan batchSpan = BatchSpan.newOrphan(context.span);
       batchSpan.addEvent(Event.Type.BATCH_PROCESSING_START, null);
+      context.span = batchSpan;
       return batchSpan;
    }
 
    public void endNewBatch() {
-      Span current = contextSpan.get();
-      if (!(current instanceof BatchSpan)) {
-         throw new IllegalStateException();
+      Context context = this.context.get();
+      if (context == null || !(context.span instanceof BatchSpan)) {
+         throw new IllegalStateException(String.valueOf(context));
       }
-      current.addEvent(Event.Type.BATCH_PROCESSING_END, null);
-      Span suppressed = ((BatchSpan) current).getSuppressed();
+      context.span.addEvent(Event.Type.BATCH_PROCESSING_END, null);
+      context.span.decrementRefCount(finishedSpans);
+      Span suppressed = ((BatchSpan) context.span).getSuppressed();
       if (suppressed == null) {
          throw new IllegalStateException();
       }
-      contextSpan.set(suppressed);
+      context.span = suppressed;
    }
 
-   public void handlingMessage(String messageId) {
-      Span span = contextSpan.get();
+   public void handlingMessage(MessageId messageId) {
+      Context context = this.context.get();
       //This might be wrongly inserted in Byteman rules
-      if (span == null){
-          System.err.println("Possible problem with the rules: Invoking \"handlingMessage\" with empty contextSpan");
-          return;
+      if (context == null || context.span == null){
+          throw new IllegalStateException("Possible problem with the rules: Invoking \"handlingMessage\" with empty contextSpan");
       }
-      span.addEvent(Event.Type.MSG_PROCESSING_START, messageId);
-      span.setIncoming(messageId);
+      context.span.addEvent(Event.Type.MSG_PROCESSING_START, messageId);
+      context.span.setIncoming(messageId);
    }
 
-   public void batchProcessingStart(List<String> messageIds) {
-      Span current = contextSpan.get();
-       //This might be wrongly inserted in Byteman rules
-       if (current == null){
-           System.err.println("Possible problem with the rules: Invoking \"batchProcessingStart\" with empty contextSpan");
-           return;
-       }
-
-      BatchSpan batchSpan = BatchSpan.newChild(current, messageIds);
-      contextSpan.set(batchSpan);
-      StringBuilder sb = new StringBuilder();
-      for (String mid : messageIds) {
-         sb.append(mid).append("||");
+   public void batchProcessingStart(List<MessageId> messageIds) {
+      Context context = this.context.get();
+      if (context == null || context.span == null) {
+         System.err.println("Possible problem with the rules: Invoking \"batchProcessingStart\" with empty contextSpan");
+         return;
       }
-      batchSpan.addEvent(Event.Type.BATCH_PROCESSING_START, sb.toString());
+
+      context.span = BatchSpan.newChild(context.span, messageIds);
+      StringBuilder sb = new StringBuilder();
+      context.span.addEvent(Event.Type.BATCH_PROCESSING_START, messageIds);
    }
 
    public void batchProcessingEnd() {
-      contextSpan.get().addEvent(Event.Type.BATCH_PROCESSING_END, null);
-      switchToParent();
+      Context context = this.context.get();
+      context.span.addEvent(Event.Type.BATCH_PROCESSING_END, null);
+      switchToParent(context);
    }
 
-   private void switchToParent() {
-      Span current = contextSpan.get();
+   private void switchToParent(Context context) {
+      if (context == null || context.span == null) {
+         System.err.println("Possible problem with the rules: Invoking \"switchToParent\" with empty contextSpan");
+         return;
+      }
 
-       //This might be wrongly inserted in Byteman rules
-       if (current == null){
-           System.err.println("Possible problem with the rules: Invoking \"switchToParent\" with empty contextSpan");
-           return;
-       }
-
-       if (current.getParent() == null) {
+      if (context.span.getParent() == null) {
          throw new IllegalStateException("Current span has no parent");
       }
-      contextSpan.set(current.getParent());
+      context.span = context.span.getParent();
    }
 
-   public void batchPush(String messageId) {
-      Span current = contextSpan.get();
+   public void batchPush(MessageId messageId) {
+      Context context = this.context.get();
 
+      if (context == null || context.span == null) {
+         System.err.println("Possible problem with the rules: Invoking \"batchPush\" with empty contextSpan");
+         return;
+      }
 
-       //This might be wrongly inserted in Byteman rules
-       if (current == null){
-           System.err.println("Possible problem with the rules: Invoking \"batchPush\" with empty contextSpan");
-           return;
-       }
-
-      if (current instanceof BatchSpan) {
-         ((BatchSpan) current).push(messageId);
+      if (context.span instanceof BatchSpan) {
+         ((BatchSpan) context.span).push(messageId);
       } else {
-         throw new IllegalStateException("Current span is: " + current);
+         throw new IllegalStateException("Current span is: " + context.span);
       }
    }
 
    public void batchPop() {
-      Span current = contextSpan.get();
+      Context context = this.context.get();
 
-       //This might be wrongly inserted in Byteman rules
-       if (current == null){
-           System.err.println("Possible problem with the rules: Invoking \"batchPop\" with empty contextSpan");
-           return;
-       }
+      if (context == null || context.span == null) {
+         System.err.println("Possible problem with the rules: Invoking \"batchPop\" with empty contextSpan");
+         return;
+      }
 
-      if (current instanceof BatchSpan) {
-         ((BatchSpan) current).pop();
+      if (context.span instanceof BatchSpan) {
+         ((BatchSpan) context.span).pop();
       } else {
-         throw new IllegalStateException("Current span is: " + current);
+         throw new IllegalStateException("Current span is: " + context.span);
       }
    }
 
-   public void discardMessages(List<String> messageIds) {
+   public void discardMessages(List<MessageId> messageIds) {
       if (messageIds == null) return;
-      Span mf = ensureSpan();
-      for (String messageId : messageIds) {
-         Span child = new Span(mf);
+      Context context = ensureContextSpan();
+      for (MessageId messageId : messageIds) {
+         Span child = new Span(context.span);
          child.setIncoming(messageId);
          child.addEvent(Event.Type.DISCARD, messageId);
       }
@@ -436,38 +421,33 @@ public class Tracer {
      *
      * @return The current span, or creates new one and set it in contextSpan
      */
-   private Span ensureSpan() {
-      Span span = contextSpan.get();
-
-      if (span == null) {
-         span = new Span();
-         contextSpan.set(span);
+   private Context ensureContextSpan() {
+      Context context = this.context.get();
+      if (context == null) {
+         this.context.set(context = new Context());
       }
-      return span;
+      if (context.span == null) {
+         context.span = new Span();
+      }
+      return context;
    }
 
    private void incrementRefCount(Object annotation) {
       AtomicInteger refCount = referenceCounters.putIfAbsent(annotation, new AtomicInteger(1));
       if (refCount != null) {
-         int count = refCount.incrementAndGet();
-//         debug(String.format("%s:%08x inc to %d", annotation.getClass().getName(), annotation.hashCode(), count));
-      } else {
-//         debug(String.format("%s:%08x set to 1", annotation.getClass().getName(), annotation.hashCode()));
+         refCount.incrementAndGet();
       }
    }
 
    private Span decrementRefCount(Object annotation) {
       AtomicInteger refCount = referenceCounters.get(annotation);
       if (refCount == null) {
-//         debug(String.format("%s:%08x no refcount", annotation.getClass().getName(), annotation.hashCode()));
          return null;
       }
       int count = refCount.decrementAndGet();
-//      debug(String.format("%s:%08x dec to %d", annotation.getClass().getName(), annotation.hashCode(), count));
       if (count == 0) {
          referenceCounters.remove(annotation);
          Span span = spans.remove(annotation);
-//         debug(String.format("%s rem %08x -> %08x", Thread.currentThread().getName(), annotation.hashCode(), span.hashCode()));
          return span;
       } else {
          return spans.get(annotation);
@@ -477,32 +457,32 @@ public class Tracer {
    /**
     * We are about to send message (sync/async) to another node
     */
-   public void outcomingStarted(String messageId) {
-      Span span = ensureSpan();
-      span.addOutcoming(messageId);
-      span.addEvent(Event.Type.OUTCOMING_DATA_STARTED, messageId);
+   public void outcomingStarted(MessageId messageId) {
+      Context context = ensureContextSpan();
+      context.span.addOutcoming(messageId);
+      context.span.addEvent(Event.Type.OUTCOMING_DATA_STARTED, messageId);
    }
 
    public void outcomingFinished() {
-      Span span = contextSpan.get();
+      Context context = this.context.get();
 
-       //This might be wrongly inserted in Byteman rules
-       if (span == null){
-           System.err.println("Possible problem with the rules: Invoking \"outcomingFinished\" with empty contextSpan");
-           return;
-       }
-      span.addEvent(Event.Type.OUTCOMING_DATA_FINISHED, null);
-      if (contextManaged.get() == null) {
-         span.decrementRefCount(finishedSpans);
-         contextSpan.remove();
-         contextManaged.remove();
+      if (context == null || context.span == null){
+         System.err.println(Thread.currentThread().getName() + "Possible problem with the rules: Invoking \"outcomingFinished\" with empty contextSpan");
+         new Throwable().fillInStackTrace().printStackTrace();
+         return;
+      }
+      context.span.addEvent(Event.Type.OUTCOMING_DATA_FINISHED, null);
+      if (!context.managed) {
+         context.span.decrementRefCount(finishedSpans);
+         context.span = null;
+         context.managed = false;
       }
    }
 
    public void setNonCausal() {
-      Span span = contextSpan.get();
-      if (span != null) {
-         span.setNonCausal();
+      Context context = this.context.get();
+      if (context != null && context.span != null) {
+         context.span.setNonCausal();
       }
    }
 
@@ -511,43 +491,59 @@ public class Tracer {
     * @param message
     */
    public void checkpoint(String message) {
-      if (contextSpan.get() == null) {
+      Context context = this.context.get();
+      if (context == null) {
         //  System.err.println("No span in checkpoint for: " + message);
+         return;
       }
-      ensureSpan().addEvent(Event.Type.CHECKPOINT, message);
+      if (context.span == null) {
+         context.span = new Span();
+      }
+      context.span.addEvent(Event.Type.CHECKPOINT, message);
+   }
+
+   public void checkpointWithClass(String message, Object object) {
+      checkpoint(message + object.getClass().getSimpleName());
    }
 
    public void traceTag(String tag) {
-      ensureSpan().addEvent(Event.Type.TRACE_TAG, tag);
+      ensureContextSpan().span.addEvent(Event.Type.TRACE_TAG, tag);
    }
 
    public void msgTag(String tag) {
-      ensureSpan().addEvent(Event.Type.MESSAGE_TAG, tag);
+      ensureContextSpan().span.addEvent(Event.Type.MESSAGE_TAG, tag);
    }
 
    public void msgTagWithClass(Object object) {
-      ensureSpan().addEvent(Event.Type.MESSAGE_TAG, object.getClass().getSimpleName());
+      ensureContextSpan().span.addEvent(Event.Type.MESSAGE_TAG, object.getClass().getSimpleName());
    }
 
    public void stackpoint() {
-      ensureSpan().addEvent(Event.Type.STACKPOINT, getStackTrace());
+      ensureContextSpan().span.addEvent(Event.Type.STACKPOINT, getStackTrace());
    }
 
    public static String getStackTrace() {
-      StackTraceElement[] stackTrace = Thread.currentThread().getStackTrace();
-      StringBuilder text = new StringBuilder("STACK");
-      for (StackTraceElement ste : stackTrace) {
-         text.append(" at ").append(ste);
-      }
-      return text.toString();
+      return Arrays.toString(Thread.currentThread().getStackTrace());
+//      StackTraceElement[] stackTrace = Thread.currentThread().getStackTrace();
+//      StringBuilder text = new StringBuilder("STACK");
+//      for (StackTraceElement ste : stackTrace) {
+//         text.append(" at ").append(ste);
+//      }
+//      return text.toString();
    }
 
    public void setMark(Object obj, String mark) {
       if (mark == null) {
          return;
       }
-      if (markedObjects.putIfAbsent(obj, mark) != null) {
-         throw new IllegalStateException("Object already marked");
+      String oldMark;
+      if ((oldMark = markedObjects.putIfAbsent(obj, mark)) != null) {
+         System.err.println("Object " + obj + " already marked with " + oldMark + " (now marking with " + mark + ")");
+         new Throwable().fillInStackTrace().printStackTrace();
+         throw new IllegalStateException("Object " + obj + " already marked with " + oldMark + " (now marking with " + mark + ")");
+      } else {
+//         System.err.println("Marking object " + obj + " with " + mark);
+//         new Throwable().fillInStackTrace().printStackTrace();
       }
    }
 
@@ -556,11 +552,16 @@ public class Tracer {
    }
 
    public void setContextMark(String mark) {
-      contextMark.set(mark);
+      Context context = this.context.get();
+      if (context == null) {
+         this.context.set(context = new Context());
+      }
+      context.mark = mark;
    }
 
    public void setMarkFromContext(Object obj) {
-      setMark(obj, contextMark.get());
+      Context context = this.context.get();
+      setMark(obj, context == null ? null : context.mark);
    }
 
    public String getMark(Object obj) {
@@ -573,9 +574,9 @@ public class Tracer {
    }
 
    public String getLastMsgTag() {
-      Span span = contextSpan.get();
-      if (span == null) return null;
-      return span.getLastMsgTag();
+      Context context = this.context.get();
+      if (context == null || context.span == null) return null;
+      return context.span.getLastMsgTag();
    }
 
    public void debug(String message) {
