@@ -23,7 +23,7 @@
 package org.mft;
 
 import org.mft.logic.Composer;
-import org.mft.logic.Input;
+import org.mft.persistence.Input;
 import org.mft.logic.InputFactory;
 import org.mft.logic.Logic;
 import org.mft.processors.AnalyseInterceptors;

@@ -34,6 +34,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import net.schmizz.sshj.SSHClient;
 import net.schmizz.sshj.sftp.RemoteFile;
 import net.schmizz.sshj.sftp.SFTPClient;
+import org.mft.persistence.Input;
 
 /**
  * @author Radim Vansa &lt;rvansa@redhat.com&gt;

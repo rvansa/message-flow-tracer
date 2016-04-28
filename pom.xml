@@ -8,8 +8,10 @@
        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
    </properties>
    <modules>
-      <module>mft-core</module>
-      <module>mft-jgroups368</module>
+      <module>mft-agent</module>
+      <module>mft-infinispan900</module>
+      <module>mft-hazelcast362</module>
+      <module>mft-processing</module>
    </modules>
 
    <developers>

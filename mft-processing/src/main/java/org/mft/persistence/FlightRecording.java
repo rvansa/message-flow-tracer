@@ -8,7 +8,6 @@ import com.jrockit.mc.flightrecorder.provider.EventType;
 import com.jrockit.mc.flightrecorder.spi.IEvent;
 import com.jrockit.mc.flightrecorder.spi.IEventType;
 import com.jrockit.mc.flightrecorder.spi.IView;
-import org.mft.logic.Input;
 import org.mft.objects.Event;
 
 import java.io.IOException;

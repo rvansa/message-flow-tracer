@@ -31,9 +31,14 @@
    </parent>
    <modelVersion>4.0.0</modelVersion>
 
-   <artifactId>mft-core</artifactId>
+   <artifactId>mft-processing</artifactId>
 
    <dependencies>
+      <dependency>
+         <groupId>org.mft</groupId>
+         <artifactId>mft-agent</artifactId>
+         <version>${parent.version}</version>
+      </dependency>
       <dependency>
          <groupId>net.schmizz</groupId>
          <artifactId>sshj</artifactId>
@@ -43,12 +48,6 @@
          <groupId>org.bouncycastle</groupId>
          <artifactId>bcprov-jdk16</artifactId>
          <version>1.46</version>
-      </dependency>
-      <dependency>
-         <groupId>org.jboss.byteman</groupId>
-         <artifactId>byteman</artifactId>
-         <version>3.0.5</version>
-         <scope>provided</scope>
       </dependency>
       <dependency>
          <groupId>com.rockit.mc</groupId>

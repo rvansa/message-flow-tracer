@@ -24,6 +24,7 @@ package org.mft.logic;
 
 import org.mft.persistence.BinaryPersister;
 import org.mft.persistence.FlightRecording;
+import org.mft.persistence.Input;
 import org.mft.persistence.Persister;
 import org.mft.persistence.TextPersister;
 

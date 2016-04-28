@@ -22,6 +22,8 @@
 
 package org.mft.logic;
 
+import org.mft.persistence.Input;
+
 import java.io.BufferedInputStream;
 import java.io.File;
 import java.io.FileInputStream;

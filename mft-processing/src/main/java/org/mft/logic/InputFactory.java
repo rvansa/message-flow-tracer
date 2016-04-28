@@ -22,6 +22,8 @@
 
 package org.mft.logic;
 
+import org.mft.persistence.Input;
+
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;

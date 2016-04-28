@@ -1,6 +1,5 @@
 package org.mft.persistence;
 
-import org.mft.logic.Input;
 import org.mft.objects.Header;
 import org.mft.objects.Span;
 

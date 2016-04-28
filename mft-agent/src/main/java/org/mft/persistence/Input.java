@@ -20,7 +20,7 @@
  * 02110-1301 USA, or see the FSF site: http://www.fsf.org.
  */
 
-package org.mft.logic;
+package org.mft.persistence;
 
 import java.io.Closeable;
 import java.io.IOException;
