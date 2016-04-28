@@ -1,4 +1,4 @@
-HELPER org.jboss.qa.jdg.messageflow.Tracer
+HELPER org.mft.Tracer
 
 RULE putInternal_entry
 CLASS org.infinispan.cache.impl.CacheImpl

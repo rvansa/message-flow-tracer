@@ -16,7 +16,7 @@ Add this to the command when running the JVM:
 
 By default the logs are written to /tmp/span.txt, you can change this by specifying
    
--Dorg.jboss.qa.messageflowtracer.output=/other/location/span.txt
+-Dorg.mft.output=/other/location/span.txt
 
 (if you're using shared location, set this variable different for each instance)
    

@@ -1,4 +1,4 @@
-                                HELPER org.jboss.qa.jdg.messageflow.Tracer
+HELPER org.mft.Tracer
 
 ######################
 # Install Identifier #
@@ -10,7 +10,7 @@ METHOD initProtocolStack
 AT EXIT
 IF TRUE
 DO
-  org.jboss.qa.jdg.messageflow.Identifier.install($0);
+  org.mft.Identifier.install($0);
 ENDRULE
 
 ###############
@@ -87,7 +87,7 @@ METHOD reject
 AT ENTRY
 IF TRUE
 DO
-  discardMessages(org.jboss.qa.jdg.messageflow.MessageIdentifier368.getDataIdentifiers($1));
+  discardMessages(org.mft.MessageIdentifier368.getDataIdentifiers($1));
 ENDRULE
 
 RULE dispatchDataFailedVersion
@@ -181,7 +181,7 @@ METHOD run
 AT INVOKE passMessageUp
 IF TRUE
 DO
-  handlingMessage(org.jboss.qa.jdg.messageflow.MessageIdentifier368.getMessageIdentifier($0.msg));
+  handlingMessage(org.mft.MessageIdentifier368.getMessageIdentifier($0.msg));
 ENDRULE
 
 RULE batchProcessingStart
@@ -190,7 +190,7 @@ METHOD run
 AT INVOKE passBatchUp
 IF TRUE
 DO
-  batchProcessingStart(org.jboss.qa.jdg.messageflow.MessageIdentifier368.getMessageIdentifiers($0.batch));
+  batchProcessingStart(org.mft.MessageIdentifier368.getMessageIdentifiers($0.batch));
 ENDRULE
 
 RULE batchProcessingEnd
@@ -208,7 +208,7 @@ METHOD send(org.jgroups.Message, org.jgroups.Address)
 AT ENTRY
 IF TRUE
 DO
-  outcomingStarted(org.jboss.qa.jdg.messageflow.MessageIdentifier368.getMessageIdentifier($1));
+  outcomingStarted(org.mft.MessageIdentifier368.getMessageIdentifier($1));
 ENDRULE
 
 RULE sendMessageEnd
@@ -231,7 +231,7 @@ METHOD up(org.jgroups.util.MessageBatch)
 AT INVOKE org.jgroups.UpHandler.up
 IF TRUE
 DO
-  batchPush(org.jboss.qa.jdg.messageflow.MessageIdentifier368.getMessageIdentifier($msg));
+  batchPush(org.mft.MessageIdentifier368.getMessageIdentifier($msg));
 ENDRULE
 
 RULE batchedMessageProcessingReceive
@@ -240,7 +240,7 @@ METHOD up(org.jgroups.util.MessageBatch)
 AT INVOKE org.jgroups.Receiver.receive
 IF TRUE
 DO
-  batchPush(org.jboss.qa.jdg.messageflow.MessageIdentifier368.getMessageIdentifier($msg));
+  batchPush(org.mft.MessageIdentifier368.getMessageIdentifier($msg));
 ENDRULE
 
 RULE batchedMessageProcessedUpHandler
@@ -271,7 +271,7 @@ METHOD up(org.jgroups.util.MessageBatch)
 AT INVOKE up(org.jgroups.Event) ALL
 IF TRUE
 DO
-  batchPush(org.jboss.qa.jdg.messageflow.MessageIdentifier368.getEventIdentifier($@[1]))
+  batchPush(org.mft.MessageIdentifier368.getEventIdentifier($@[1]))
 ENDRULE
 
 RULE Protocol_batchedUpFinished
@@ -304,7 +304,7 @@ METHOD handleBatchReceived
 AT INVOKE sendAck
 IF TRUE
 DO
-  batchPush(org.jboss.qa.jdg.messageflow.MessageIdentifier368.getMessageIdentifier($msg))
+  batchPush(org.mft.MessageIdentifier368.getMessageIdentifier($msg))
 ENDRULE
 
 RULE UNICAST2_SentAck
@@ -341,7 +341,7 @@ METHOD handleBatchReceived
 AT INVOKE org.jgroups.stack.Protocol.up(org.jgroups.Event) ALL
 IF TRUE
 DO
-  batchPush(org.jboss.qa.jdg.messageflow.MessageIdentifier368.getMessageIdentifier($msg));
+  batchPush(org.mft.MessageIdentifier368.getMessageIdentifier($msg));
 ENDRULE
 
 RULE UNICAST2_BatchedOOBUpFinished
@@ -359,7 +359,7 @@ METHOD handleBatchReceived
 AT INVOKE org.jgroups.stack.Protocol.up
 IF TRUE
 DO
-  batchPush(org.jboss.qa.jdg.messageflow.MessageIdentifier368.getMessageIdentifier($msg));
+  batchPush(org.mft.MessageIdentifier368.getMessageIdentifier($msg));
 ENDRULE
 
 RULE UNICAST_BatchedOOBUpFinished
@@ -429,7 +429,7 @@ ENDRULE
 ##AT INVOKE org.jgroups.stack.Protocol.up
 #IF TRUE
 #DO
-#  batchPush(org.jboss.qa.jdg.messageflow.MessageIdentifier368.getMessageIdentifier($batch.first()));
+#  batchPush(org.mft.MessageIdentifier368.getMessageIdentifier($batch.first()));
 #ENDRULE
 
 #RULE UNICAST3_BatchedOOBUpFinished
@@ -591,7 +591,7 @@ METHOD up(org.jgroups.util.MessageBatch)
 AT INVOKE org.jgroups.protocols.FlowControl.handleUpEvent
 IF TRUE
 DO
-  batchPush(org.jboss.qa.jdg.messageflow.MessageIdentifier368.getMessageIdentifier($msg));
+  batchPush(org.mft.MessageIdentifier368.getMessageIdentifier($msg));
 ENDRULE
 
 RULE FlowControl_BatchedHandleFinished
@@ -609,7 +609,7 @@ METHOD up(org.jgroups.util.MessageBatch)
 AT INVOKE org.jgroups.protocols.FC.handleUpEvent
 IF TRUE
 DO
-  batchPush(org.jboss.qa.jdg.messageflow.MessageIdentifier368.getMessageIdentifier($msg));
+  batchPush(org.mft.MessageIdentifier368.getMessageIdentifier($msg));
 ENDRULE
 
 RULE FC_BatchedHandleFinished
@@ -655,7 +655,7 @@ METHOD up(org.jgroups.util.MessageBatch)
 AT INVOKE org.jgroups.protocols.relay.RELAY2.handleMessage
 IF TRUE
 DO
-  batchPush(org.jboss.qa.jdg.messageflow.MessageIdentifier368.getMessageIdentifier($msg));
+  batchPush(org.mft.MessageIdentifier368.getMessageIdentifier($msg));
 ENDRULE
 
 RULE RELAY2_BatchedHandleFinished
@@ -673,7 +673,7 @@ METHOD up(org.jgroups.util.MessageBatch)
 AT INVOKE org.jgroups.protocols.relay.RELAY2.deliver
 IF TRUE
 DO
-  batchPush(org.jboss.qa.jdg.messageflow.MessageIdentifier368.getMessageIdentifier($msg));
+  batchPush(org.mft.MessageIdentifier368.getMessageIdentifier($msg));
 ENDRULE
 
 RULE RELAY2_BatchedDeliverFinished
@@ -691,7 +691,7 @@ METHOD up(org.jgroups.util.MessageBatch)
 AT INVOKE org.jgroups.protocols.relay.RELAY.handleUpEvent
 IF TRUE
 DO
-  batchPush(org.jboss.qa.jdg.messageflow.MessageIdentifier368.getMessageIdentifier($msg));
+  batchPush(org.mft.MessageIdentifier368.getMessageIdentifier($msg));
 ENDRULE
 
 RULE RELAY_BatchedHandleFinished
@@ -713,7 +713,7 @@ METHOD up(org.jgroups.util.MessageBatch)
 AT INVOKE handleUpEvent
 IF TRUE
 DO
-  batchPush(org.jboss.qa.jdg.messageflow.MessageIdentifier368.getMessageIdentifier($msg));
+  batchPush(org.mft.MessageIdentifier368.getMessageIdentifier($msg));
 ENDRULE
 
 RULE STABLE_BatchedHandleFinished

@@ -1,7 +1,8 @@
+HELPER org.mft.Tracer
+
 RULE callRemoteMethods_entry
 CLASS org.jgroups.blocks.RpcDispatcher
 METHOD callRemoteMethods(Collection, MethodCall, RequestOptions)
-HELPER org.jboss.qa.jdg.messageflow.Tracer
 AT ENTRY
 IF TRUE
 DO
@@ -13,7 +14,6 @@ ENDRULE
 RULE callRemoteMethods_exit
 CLASS org.jgroups.blocks.RpcDispatcher
 METHOD callRemoteMethods(Collection, MethodCall, RequestOptions)
-HELPER org.jboss.qa.jdg.messageflow.Tracer
 AT EXIT
 IF TRUE
 DO
@@ -24,7 +24,6 @@ ENDRULE
 RULE callRemoteMethod_entry
 CLASS org.jgroups.blocks.RpcDispatcher
 METHOD callRemoteMethod(Address, MethodCall, RequestOptions)
-HELPER org.jboss.qa.jdg.messageflow.Tracer
 AT ENTRY
 IF TRUE
 DO
@@ -36,7 +35,6 @@ ENDRULE
 RULE callRemoteMethod_exit
 CLASS org.jgroups.blocks.RpcDispatcher
 METHOD callRemoteMethod(Address, MethodCall, RequestOptions)
-HELPER org.jboss.qa.jdg.messageflow.Tracer
 AT EXIT
 IF TRUE
 DO

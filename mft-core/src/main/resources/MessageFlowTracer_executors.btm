@@ -1,4 +1,4 @@
-HELPER org.jboss.qa.jdg.messageflow.Tracer
+HELPER org.mft.Tracer
 
 RULE TPE_execute
 CLASS ^java.util.concurrent.ThreadPoolExecutor

@@ -26,7 +26,7 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
    <parent>
       <artifactId>message-flow-tracer</artifactId>
-      <groupId>org.jboss.qa</groupId>
+      <groupId>org.mft</groupId>
       <version>0.1.0-SNAPSHOT</version>
    </parent>
    <modelVersion>4.0.0</modelVersion>
@@ -89,8 +89,8 @@
             <configuration>
                <archive>
                   <manifest>
-                     <mainClass>org.jboss.qa.jdg.messageflow.Main</mainClass>
-                     <packageName>org.jboss.qa.jdg.messageflow</packageName>
+                     <mainClass>org.mft.Main</mainClass>
+                     <packageName>org.mft</packageName>
                      <addClasspath>true</addClasspath>
                   </manifest>
                </archive>
