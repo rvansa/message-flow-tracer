@@ -22,6 +22,12 @@
 
 package org.jboss.qa.jdg.messageflow.logic;
 
+import org.jboss.qa.jdg.messageflow.persistence.BinaryPersister;
+import org.jboss.qa.jdg.messageflow.persistence.FlightRecording;
+import org.jboss.qa.jdg.messageflow.persistence.Persister;
+import org.jboss.qa.jdg.messageflow.persistence.TextPersister;
+
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -30,10 +36,33 @@ import java.util.List;
  */
 public abstract class Logic implements Runnable {
 
-   protected List<Input> inputs = new ArrayList<Input>();
+   protected List<Persister> logs = new ArrayList<>();
+   protected List<FlightRecording> flightRecordings = new ArrayList<>();
 
-   public void addInput(Input file) {
-      inputs.add(file);
+   public void addInput(Input input) {
+      byte[] magic = new byte[4];
+      try {
+         if (input.peek(magic) < magic.length) {
+            throw new IllegalArgumentException("Cannot determine input type for " + input.name());
+         }
+      } catch (IOException e) {
+         throw new IllegalArgumentException("Cannot determine input type for " + input.name(), e);
+      }
+      if (startsWith(magic, BinaryPersister.TAG)) {
+         logs.add(new BinaryPersister(input));
+      } else if (startsWith(magic, TextPersister.TAG)) {
+         logs.add(new TextPersister(input));
+      } else if (startsWith(magic, FlightRecording.TAG)) {
+         flightRecordings.add(new FlightRecording(input));
+      }
+   }
+
+   private boolean startsWith(byte[] array, byte[] prefix) {
+      if (prefix.length > array.length) return false;
+      for (int i = 0; i < prefix.length; ++i) {
+         if (prefix[i] != array[i]) return false;
+      }
+      return true;
    }
 
    protected boolean joinAll(Thread[] threads) {

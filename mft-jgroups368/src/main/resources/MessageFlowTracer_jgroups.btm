@@ -1,4 +1,4 @@
-HELPER org.jboss.qa.jdg.messageflow.Tracer
+                                HELPER org.jboss.qa.jdg.messageflow.Tracer
 
 ######################
 # Install Identifier #
@@ -17,45 +17,45 @@ ENDRULE
 # ALL up/down #
 ###############
 
-RULE logUp
-CLASS ^org.jgroups.stack.Protocol
-METHOD up
-NOCOMPILE
-AT ENTRY
-IF TRUE
-DO
-  checkpointWithClass("up>", $0)
-ENDRULE
+#RULE logUp
+#CLASS ^org.jgroups.stack.Protocol
+#METHOD up
+#NOCOMPILE
+#AT ENTRY
+#IF TRUE
+#DO
+#  checkpointWithClass("up>", $0)
+#ENDRULE
 
-RULE logUp_exit
-CLASS ^org.jgroups.stack.Protocol
-METHOD up
-NOCOMPILE
-AT EXIT
-IF TRUE
-DO
-  checkpointWithClass("up<", $0)
-ENDRULE
+#RULE logUp_exit
+#CLASS ^org.jgroups.stack.Protocol
+#METHOD up
+#NOCOMPILE
+#AT EXIT
+#IF TRUE
+#DO
+#  checkpointWithClass("up<", $0)
+#ENDRULE
 
-RULE logDown
-CLASS ^org.jgroups.stack.Protocol
-METHOD down
-NOCOMPILE
-AT ENTRY
-IF TRUE
-DO
-  checkpointWithClass("down>", $0)
-ENDRULE
+#RULE logDown
+#CLASS ^org.jgroups.stack.Protocol
+#METHOD down
+#NOCOMPILE
+#AT ENTRY
+#IF TRUE
+#DO
+#  checkpointWithClass("down>", $0)
+#ENDRULE
 
-RULE logDown_exit
-CLASS ^org.jgroups.stack.Protocol
-METHOD down
-NOCOMPILE
-AT EXIT
-IF TRUE
-DO
-  checkpointWithClass("down<", $0)
-ENDRULE
+#RULE logDown_exit
+#CLASS ^org.jgroups.stack.Protocol
+#METHOD down
+#NOCOMPILE
+#AT EXIT
+#IF TRUE
+#DO
+#  checkpointWithClass("down<", $0)
+#ENDRULE
 
 
 ##########

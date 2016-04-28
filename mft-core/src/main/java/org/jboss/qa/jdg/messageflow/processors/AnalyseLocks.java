@@ -26,6 +26,7 @@ import java.io.PrintStream;
 import java.util.*;
 
 import org.jboss.qa.jdg.messageflow.objects.Event;
+import org.jboss.qa.jdg.messageflow.objects.Header;
 import org.jboss.qa.jdg.messageflow.objects.Trace;
 
 /**
@@ -132,6 +133,10 @@ public class AnalyseLocks implements Processor {
          System.err.println("Lockings is not empty at the end of the trace");
       }
 
+   }
+
+   @Override
+   public void processHeader(Header header) {
    }
 
    public void setLockCompleted(Map<String, Locking> lockings, Set<Locking> finished, Event e, String key, boolean successful) {

@@ -1,5 +1,7 @@
 package org.jboss.qa.jdg.messageflow.persistence;
 
+import org.jboss.qa.jdg.messageflow.logic.Input;
+import org.jboss.qa.jdg.messageflow.objects.Header;
 import org.jboss.qa.jdg.messageflow.objects.Span;
 
 import java.io.IOException;
@@ -9,22 +11,23 @@ import java.util.function.Consumer;
  * @author Radim Vansa &lt;rvansa@redhat.com&gt;
  */
 public abstract class Persister {
-   private long nanoTime, unixTime;
+   protected final Input input;
 
-   protected void setTimes(long nanoTime, long unixTime) {
-      this.nanoTime = nanoTime;
-      this.unixTime = unixTime;
+   protected Persister(Input input) {
+      this.input = input;
    }
 
-   public long getNanoTime() {
-      return nanoTime;
+   protected Persister() {
+      input = null;
    }
 
-   public long getUnixTime() {
-      return unixTime;
+   public Input getInput() {
+      return input;
    }
 
-   public abstract void open(String path, long nanoTime, long unixTime) throws IOException;
+   public abstract void openForWrite(String path, Header header) throws IOException;
+
+   public abstract Header openForRead() throws IOException;
 
    public abstract void write(Span span, boolean sort) throws IOException;
 

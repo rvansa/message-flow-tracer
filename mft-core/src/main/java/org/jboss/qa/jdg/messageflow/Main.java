@@ -80,8 +80,6 @@ public class Main {
                return;
             }
             composer.setMaxAdvanceMillis(Long.parseLong(args[++i]));
-         } else if (args[i].equals("-b")) {
-            composer.setBinarySpans(true);
          } else if (args[i].equals("-mm")) {
             if (i + 1 > args.length) {
                printUsage();
@@ -126,7 +124,6 @@ public class Main {
       System.err.println("\t-al            \tAnalyze locks");
       System.err.println("\t-at            \tAnalyze traces");
       System.err.println("\t-ai            \tAnalyze interceptors");
-      System.err.println("\t-b             \tProcess spans in binary format");
       System.err.println("\t-a             \tPrints log of traces and runs all available analyses");
       System.err.println("\t-d milliseconds\tMaximum difference between highest processed timestamp in second-pass threads");
       System.err.println("\t-mm N          \tStop second-pass processing after consuming N messages");

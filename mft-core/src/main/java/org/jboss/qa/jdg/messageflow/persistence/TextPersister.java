@@ -1,6 +1,8 @@
 package org.jboss.qa.jdg.messageflow.persistence;
 
+import org.jboss.qa.jdg.messageflow.logic.Input;
 import org.jboss.qa.jdg.messageflow.objects.Event;
+import org.jboss.qa.jdg.messageflow.objects.Header;
 import org.jboss.qa.jdg.messageflow.objects.MessageId;
 import org.jboss.qa.jdg.messageflow.objects.Span;
 
@@ -8,18 +10,19 @@ import java.io.BufferedOutputStream;
 import java.io.BufferedReader;
 import java.io.FileOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.PrintStream;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.UUID;
 import java.util.function.Consumer;
 
 /**
  * @author Radim Vansa &lt;rvansa@redhat.com&gt;
  */
 public class TextPersister extends Persister {
+   public static final byte[] TAG = new byte[] { 'M', 'F', 'T', 'T'};
    public static final String NON_CAUSAL = "NC";
    public static final String SPAN = "SPAN";
    public static final String EVENT = "E";
@@ -35,22 +38,31 @@ public class TextPersister extends Persister {
       this.prefix = prefix;
    }
 
-   public TextPersister(InputStream inputStream) throws IOException {
-      reader = new BufferedReader(new InputStreamReader(inputStream));
-      String timeSync = reader.readLine();
-      if (timeSync == null) {
-         System.err.println("Empty file!");
-         return;
-      }
-      String[] nanoAndUnix = timeSync.split("=");
-      setTimes(Long.parseLong(nanoAndUnix[0]), Long.parseLong(nanoAndUnix[1]));
-      lineNumber = 1;
+   public TextPersister(Input input) {
+      super(input);
    }
 
    @Override
-   public void open(String path, long nanoTime, long unixTime) throws IOException {
+   public void openForWrite(String path, Header header) throws IOException {
+      close();
       printStream = new PrintStream(new BufferedOutputStream(new FileOutputStream(path)));
-      printStream.printf("%d=%d\n", nanoTime, unixTime);
+      printStream.printf(new String(TAG) + ";%d;%d;%s\n", header.getNanoTime(), header.getUnixTime());
+   }
+
+   @Override
+   public Header openForRead() throws IOException {
+      close();
+      reader = new BufferedReader(new InputStreamReader(input.stream()));
+      String timeSync = reader.readLine();
+      if (timeSync == null) {
+         throw new IllegalArgumentException("Text spans log is empty!");
+      }
+      String[] parts = timeSync.split(";");
+      if (parts.length != 4 || !TAG.equals(parts[0])) {
+         throw new IllegalArgumentException("Not a text span log");
+      }
+      lineNumber = 1;
+      return new Header(Long.parseLong(parts[1]), Long.parseLong(parts[2]));
    }
 
    @Override
@@ -101,9 +113,14 @@ public class TextPersister extends Persister {
    }
 
    @Override
-   public void close() {
+   public void close() throws IOException {
+      if (reader != null) {
+         reader.close();
+         reader = null;
+      }
       if (printStream != null) {
          printStream.close();
+         printStream = null;
       }
    }
 

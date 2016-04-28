@@ -22,6 +22,7 @@
 
 package org.jboss.qa.jdg.messageflow.processors;
 
+import org.jboss.qa.jdg.messageflow.objects.Header;
 import org.jboss.qa.jdg.messageflow.objects.Trace;
 
 /**
@@ -31,5 +32,6 @@ import org.jboss.qa.jdg.messageflow.objects.Trace;
  */
 public interface Processor {
    void process(Trace trace, long traceCounter);
+   void processHeader(Header header);
    void finish();
 }

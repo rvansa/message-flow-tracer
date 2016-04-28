@@ -163,17 +163,17 @@ public class Span implements Serializable {
 //         System.err.printf("%08x finished\n", this.hashCode());
          finishedSpans.add(this);
       } else {
-//         boolean causalChildren = false;
+         boolean causalChildren = false;
          for (Span child : children) {
-//            if (!child.isNonCausal()) {
-//               causalChildren = true;
-//            }
+            if (!child.isNonCausal()) {
+               causalChildren = true;
+            }
             child.passToFinished(finishedSpans);
          }
-//         if (!causalChildren) {
-//            finishedSpans.add(this);
+         if (!causalChildren) {
+            finishedSpans.add(this);
 //            System.err.printf("%08x finished\n", this.hashCode());
-//         }
+         }
       }
    }
 
@@ -251,7 +251,7 @@ public class Span implements Serializable {
    @Override
    public String toString(){
       StringBuilder sb = new StringBuilder();
-      sb.append(nonCausal ? "SPAN: nonCasual" : "SPAN: casual");
+      sb.append(nonCausal ? "SPAN: nonCasual" : "SPAN: causal");
       sb.append(" Incoming: " + incoming);
       if (outcoming != null){
          for (MessageId message : outcoming){

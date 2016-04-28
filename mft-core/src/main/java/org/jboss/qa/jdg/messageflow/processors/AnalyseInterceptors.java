@@ -30,6 +30,7 @@ import java.util.SortedMap;
 import java.util.TreeMap;
 
 import org.jboss.qa.jdg.messageflow.objects.Event;
+import org.jboss.qa.jdg.messageflow.objects.Header;
 import org.jboss.qa.jdg.messageflow.objects.Trace;
 
 /**
@@ -88,6 +89,10 @@ public class AnalyseInterceptors implements Processor {
             }
          }
       }
+   }
+
+   @Override
+   public void processHeader(Header header) {
    }
 
    @Override

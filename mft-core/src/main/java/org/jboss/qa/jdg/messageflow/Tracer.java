@@ -24,6 +24,7 @@ package org.jboss.qa.jdg.messageflow;
 
 import org.jboss.qa.jdg.messageflow.objects.BatchSpan;
 import org.jboss.qa.jdg.messageflow.objects.Event;
+import org.jboss.qa.jdg.messageflow.objects.Header;
 import org.jboss.qa.jdg.messageflow.objects.MessageId;
 import org.jboss.qa.jdg.messageflow.objects.Span;
 import org.jboss.qa.jdg.messageflow.persistence.BinaryPersister;
@@ -36,6 +37,7 @@ import java.nio.file.Paths;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -69,25 +71,26 @@ public class Tracer {
       final Thread writer = new Thread() {
          @Override
          public void run() {
+            boolean binarySpans = System.getProperty("org.jboss.qa.messageflowtracer.binarySpans") != null ? true : false;
             String path = System.getProperty("org.jboss.qa.messageflowtracer.output");
             if (path == null) {
                String suffixProperty = System.getProperty("org.jboss.qa.messageflowtracer.suffix.property");
                String suffix = suffixProperty == null ? null : System.getProperty(suffixProperty);
                String dir = System.getProperty("org.jboss.qa.messageflowtracer.outputdir", "/tmp");
+               String ext = binarySpans ? ".bin" : ".txt";
                if (suffix != null) {
-                  path = Paths.get(dir, "span." + suffix + ".txt").toString();
+                  path = Paths.get(dir, "span." + suffix + ext).toString();
                } else {
                   try {
-                     path = File.createTempFile("span.", ".txt", new File(dir)).getAbsolutePath();
+                     path = File.createTempFile("span.", ext, new File(dir)).getAbsolutePath();
                   } catch (IOException e) {
-                     path = "/tmp/span.txt";
+                     path = "/tmp/span" + ext;
                   }
                }
             }
-            boolean binarySpans = System.getProperty("org.jboss.qa.messageflowtracer.binarySpans") != null ? true : false;
             Persister persister = binarySpans ? new BinaryPersister() : new TextPersister();
             try {
-               persister.open(path, System.nanoTime(), System.currentTimeMillis());
+               persister.openForWrite(path, new Header());
                while (running || !finishedSpans.isEmpty()) {
                   Span span;
                   while ((span = finishedSpans.poll()) != null) {

@@ -1,6 +1,8 @@
 package org.jboss.qa.jdg.messageflow.persistence;
 
+import org.jboss.qa.jdg.messageflow.logic.Input;
 import org.jboss.qa.jdg.messageflow.objects.Event;
+import org.jboss.qa.jdg.messageflow.objects.Header;
 import org.jboss.qa.jdg.messageflow.objects.MessageId;
 import org.jboss.qa.jdg.messageflow.objects.Span;
 
@@ -10,18 +12,20 @@ import java.io.DataOutputStream;
 import java.io.EOFException;
 import java.io.FileOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.function.Consumer;
 
 /**
  * @author Radim Vansa &lt;rvansa@redhat.com&gt;
  */
 public class BinaryPersister extends Persister {
+   public static final byte[] TAG = new byte[]{'M', 'F', 'T', 'B'};
    private static final byte NULL = 0;
    private static final byte TEXT = 1;
    private static final byte MESSAGE = 2;
@@ -32,17 +36,29 @@ public class BinaryPersister extends Persister {
 
    public BinaryPersister() {}
 
-   public BinaryPersister(InputStream inputStream) throws IOException {
-      this.inputStream = new DataInputStream(inputStream);
-      setTimes(this.inputStream.readLong(), this.inputStream.readLong());
+   public BinaryPersister(Input input) {
+      super(input);
    }
 
    @Override
-   public void open(String path, long nanoTime, long unixTime) throws IOException {
+   public void openForWrite(String path, Header header) throws IOException {
+      close();
       outputStream = new DataOutputStream(new BufferedOutputStream(new FileOutputStream(path)));
 
-      outputStream.writeLong(nanoTime);
-      outputStream.writeLong(unixTime);
+      outputStream.write(TAG);
+      outputStream.writeLong(header.getNanoTime());
+      outputStream.writeLong(header.getUnixTime());
+   }
+
+   @Override
+   public Header openForRead() throws IOException {
+      close();
+      this.inputStream = new DataInputStream(input.stream());
+      byte[] fileTag = new byte[4];
+      if (inputStream.read(fileTag) < 4 || !Arrays.equals(fileTag, TAG)) {
+         throw new IllegalArgumentException("Not a binary span log");
+      }
+      return new Header(inputStream.readLong(), inputStream.readLong());
    }
 
    @Override
@@ -111,8 +127,13 @@ public class BinaryPersister extends Persister {
 
    @Override
    public void close() throws IOException {
+      if (inputStream != null) {
+         inputStream.close();
+         inputStream = null;
+      }
       if (outputStream != null) {
          outputStream.close();
+         outputStream = null;
       }
    }
 

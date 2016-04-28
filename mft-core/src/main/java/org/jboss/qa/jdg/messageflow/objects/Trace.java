@@ -44,12 +44,10 @@ public class Trace {
    public Lock lock = new ReentrantLock();
 
    public void addMessage(MessageId msg) {
-      if (retired) throw new IllegalStateException();
       messages.add(msg);
    }
 
    public void addEvent(Event e) {
-      if (retired) throw new IllegalStateException();
       events.add(e);
    }
 
@@ -298,5 +296,34 @@ public class Trace {
 
    public <T> Map<T, List<Event>> getEventsBySelector(Function<Event, T> selector) {
       return events.stream().collect(Collectors.toMap(selector, Collections::singletonList, Trace::mergeLists));
+   }
+
+   public static class SourcedThread {
+      public final String source;
+      public final String threadName;
+
+      public SourcedThread(String source, String threadName) {
+         this.source = source;
+         this.threadName = threadName;
+      }
+
+      @Override
+      public boolean equals(Object o) {
+         if (this == o) return true;
+         if (o == null || getClass() != o.getClass()) return false;
+
+         SourcedThread that = (SourcedThread) o;
+
+         if (!source.equals(that.source)) return false;
+         return threadName.equals(that.threadName);
+
+      }
+
+      @Override
+      public int hashCode() {
+         int result = source.hashCode();
+         result = 31 * result + threadName.hashCode();
+         return result;
+      }
    }
 }

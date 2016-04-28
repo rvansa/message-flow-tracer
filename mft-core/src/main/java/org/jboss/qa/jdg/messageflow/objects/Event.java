@@ -51,7 +51,17 @@ public class Event {
       BATCH_PROCESSING_END("ProcessedBatch"),
       CONTAINS("Contains"),
       DISCARD("Discard"),
-      RETRANSMISSION("Retransmission");
+      RETRANSMISSION("Retransmission"),
+      EXECUTION_SAMPLE("Execution sample"),
+      THREAD_PARK_START("Thread park start"),
+      THREAD_PARK_END("Thread park end"),
+      THREAD_SLEEP_START("Thread sleep start"),
+      THREAD_SLEEP_END("Thread sleep end"),
+      MONITOR_ENTER("Monitor enter"),
+      MONITOR_EXIT("Monitor exit"),
+      MONITOR_WAIT_START("Monitor wait start"),
+      MONITOR_WAIT_END("Monitor wait end")
+      ;
 
       private String name;
 
@@ -97,6 +107,15 @@ public class Event {
       this.source = source;
       this.span = span;
       this.threadName = threadName.intern();
+      this.payload = payload;
+   }
+
+   public Event(long timestamp, String source, String threadName, Type type, Object payload) {
+      this.timestamp = new Date(timestamp);
+      this.nanoTime = Long.MIN_VALUE;
+      this.source = source;
+      this.threadName = threadName;
+      this.type = type;
       this.payload = payload;
    }
 

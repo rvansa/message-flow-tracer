@@ -26,21 +26,27 @@ import java.io.*;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.NavigableMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLongArray;
+import java.util.function.Function;
+import java.util.function.LongConsumer;
 import java.util.function.Predicate;
+import java.util.stream.Collectors;
 
 import org.jboss.qa.jdg.messageflow.objects.Event;
+import org.jboss.qa.jdg.messageflow.objects.Header;
 import org.jboss.qa.jdg.messageflow.objects.MessageId;
 import org.jboss.qa.jdg.messageflow.objects.Span;
 import org.jboss.qa.jdg.messageflow.objects.Trace;
-import org.jboss.qa.jdg.messageflow.persistence.BinaryPersister;
+import org.jboss.qa.jdg.messageflow.persistence.FlightRecording;
 import org.jboss.qa.jdg.messageflow.persistence.Persister;
-import org.jboss.qa.jdg.messageflow.persistence.TextPersister;
 import org.jboss.qa.jdg.messageflow.processors.Processor;
 
 /**
@@ -65,18 +71,27 @@ public class Composer extends Logic {
    private int totalMessages;
    private boolean sortCausally = true;
    private long maxAdvanceMillis = 10000;
-   private boolean binarySpans = false;
    private List<Predicate<Trace>> filters = new ArrayList<>();
    private long maxMessages = Long.MAX_VALUE;
    private long maxTraces = Long.MAX_VALUE;
+   private Map<String, FlightRecording> flrBySource;
 
    @Override
    public void run() {
+      System.err.println("Loading flight recordings");
+      Thread[] flrThreads = new Thread[flightRecordings.size()];
+      for (int i = 0; i < flrThreads.length; ++i) {
+         FlightRecording flightRecording = flightRecordings.get(i);
+         flrThreads[i] = new Thread(() -> flightRecording.load(getSource(flightRecording.getInput().name())), "FLR: " + flightRecording.getInput().name());
+         flrThreads[i].start();
+      }
+      if (!joinAll(flrThreads)) return;
+      flrBySource = flightRecordings.stream().collect(Collectors.toMap(flr -> getSource(flr.getInput().name()), Function.identity()));
+
       System.err.println("Starting first pass");
-      Thread[] threads = new Thread[inputs.size()];
-      for (int i = 0; i < inputs.size(); ++i) {
-         Thread t = new FirstPassThread(inputs.get(i));
-         t.setName("First pass: " + inputs.get(i));
+      Thread[] threads = new Thread[logs.size()];
+      for (int i = 0; i < logs.size(); ++i) {
+         Thread t = new FirstPassThread(logs.get(i));
          threads[i] = t;
          t.start();
       }
@@ -87,10 +102,9 @@ public class Composer extends Logic {
          reportMemoryUsage();
       }
       System.err.println("Starting second pass");
-      highestUnixTimestamps = new AtomicLongArray(inputs.size());
-      for (int i = 0; i < inputs.size(); ++i) {
-         Thread t = new SecondPassThread(inputs.get(i), i);
-         t.setName("Second pass: " + inputs.get(i));
+      highestUnixTimestamps = new AtomicLongArray(logs.size());
+      for (int i = 0; i < logs.size(); ++i) {
+         Thread t = new SecondPassThread(logs.get(i), i);
          threads[i] = t;
          t.start();
       }
@@ -140,10 +154,6 @@ public class Composer extends Logic {
       this.maxAdvanceMillis = maxAdvanceMillis;
    }
 
-   public void setBinarySpans(boolean binarySpans) {
-      this.binarySpans = binarySpans;
-   }
-
    public void addFilter(Predicate<Trace> filter) {
       filters.add(filter);
    }
@@ -157,18 +167,18 @@ public class Composer extends Logic {
    }
 
    private class FirstPassThread extends Thread {
-      private Input input;
+      private Persister persister;
 
-      private FirstPassThread(Input input) {
-         this.input = input;
+      private FirstPassThread(Persister persister) {
+         super("First pass: " + persister.getInput().name());
+         this.persister = persister;
       }
 
       @Override
       public void run() {
          try {
-            input.open();
+            persister.openForRead();
             try {
-               Persister persister = binarySpans ? new BinaryPersister(input.stream()) : new TextPersister(input.stream());
                persister.read(span -> {
                   for (MessageId msg : span.getMessages()) {
                      AtomicInteger prev = messageReferences.putIfAbsent(msg, new AtomicInteger(1));
@@ -182,12 +192,12 @@ public class Composer extends Logic {
                      }
                   }
                }, false);
-               System.err.println("Finished reading (first pass) " + input);
+               System.err.println("Finished reading (first pass) " + persister.getInput().name());
             } finally {
-               input.close();
+               persister.close();
             }
          } catch (IOException e) {
-            System.err.println("Error reading " + input + " due to " + e);
+            System.err.println("Error reading " + persister + " due to " + e);
             e.printStackTrace();
             System.exit(1);
          }
@@ -195,82 +205,89 @@ public class Composer extends Logic {
    }
 
    private class SecondPassThread extends Thread {
-      private Input input;
+      private Persister persister;
       private int selfIndex;
       private long highestUnixTimestamp = 0;
 
-      public SecondPassThread(Input input, int selfIndex) {
-         this.input = input;
+      public SecondPassThread(Persister persister, int selfIndex) {
+         super("Second pass: " + persister.getInput().name());
+         this.persister = persister;
          this.selfIndex = selfIndex;
       }
 
       @Override
       public void run() {
          try {
-            input.open();
-            String source = input.shortName();
-            int dotIndex = source.lastIndexOf('.');
-            String sourceName = dotIndex < 0 ? source : source.substring(0, dotIndex);
+            String source = getSource(persister.getInput().name());
 
-            Persister persister = binarySpans ? new BinaryPersister(input.stream()) : new TextPersister(input.stream());
             AtomicInteger spanCounter = new AtomicInteger();
-            persister.read(span -> {
-               if (!span.isNonCausal()) {
-                  Trace trace = null;
-                  for (MessageId message : span.getMessages()) {
-                     if (trace == null) {
-                        trace = retrieveTraceFor(message);
-                     } else {
-                        Trace traceForThisMessage = traces.get(message);
-                        if (trace == traceForThisMessage) {
-                           //System.err.println("Message should not be twice in one trace on one machine! (" + message + ", " + source + ":" + lineNumber + ")");
-                        } else if (traceForThisMessage == null) {
-                           trace.addMessage(message);
-                           traceForThisMessage = traces.putIfAbsent(message, trace);
-                           if (traceForThisMessage != null) {
+
+            Header header = persister.openForRead();
+            for (Processor processor : processors) {
+               processor.processHeader(header);
+            }
+            try {
+               persister.read(span -> {
+                  int spanId = spanCounter.getAndIncrement();
+                  if (!span.isNonCausal()) {
+                     Trace trace = null;
+                     for (MessageId message : span.getMessages()) {
+                        if (trace == null) {
+                           trace = retrieveTraceFor(message);
+                        } else {
+                           Trace traceForThisMessage = traces.get(message);
+                           if (trace == traceForThisMessage) {
+                              //System.err.println("Message should not be twice in one trace on one machine! (" + message + ", " + source + ":" + lineNumber + ")");
+                           } else if (traceForThisMessage == null) {
+                              trace.addMessage(message);
+                              traceForThisMessage = traces.putIfAbsent(message, trace);
+                              if (traceForThisMessage != null) {
+                                 trace = mergeTraces(trace, message, traceForThisMessage);
+                              }
+                           } else {
                               trace = mergeTraces(trace, message, traceForThisMessage);
                            }
-                        } else {
-                           trace = mergeTraces(trace, message, traceForThisMessage);
+                        }
+                        decrementMessageRefCount(message);
+                     }
+                     if (trace == null) {
+                        // no message associated, but tracked?
+                        trace = new Trace();
+                        trace.lock.lock();
+                     }
+                     for (Span.LocalEvent event : span.getEvents()) {
+                        Event e = new Event(header.getNanoTime(), header.getUnixTime(), event.timestamp, source,
+                           spanId, event.threadName, event.type, event.payload);
+                        trace.addEvent(e);
+                        checkAdvance(e.timestamp.getTime());
+                     }
+                     tryRetire(trace);
+                  } else {
+                     for (Span.LocalEvent event : span.getEvents()) {
+                        if (event.type == Event.Type.OUTCOMING_DATA_STARTED) {
+                           MessageId messageId = (MessageId) event.payload;
+                           Trace traceForThisMessage = retrieveTraceFor(messageId);
+                           Event e = new Event(header.getNanoTime(), header.getUnixTime(), event.timestamp,
+                              source, spanId, event.threadName, Event.Type.RETRANSMISSION, event.payload);
+                           traceForThisMessage.addEvent(e);
+
+                           decrementMessageRefCount(messageId);
+                           tryRetire(traceForThisMessage);
+                           checkAdvance(e.timestamp.getTime());
+                        } else if (event.type == Event.Type.TRACE_TAG) {
+                           System.err.println(String.format("Warning: Span with trace tag (%s) marked as non-causal (%s line %d)", event.payload, source, persister.getPosition()));
                         }
                      }
-                     decrementMessageRefCount(message);
                   }
-                  if (trace == null) {
-                     // no message associated, but tracked?
-                     trace = new Trace();
-                     trace.lock.lock();
-                  }
-                  for (Span.LocalEvent event : span.getEvents()) {
-                     Event e = new Event(persister.getNanoTime(), persister.getUnixTime(), event.timestamp, sourceName,
-                        spanCounter.getAndIncrement(), event.threadName, event.type, event.payload);
-                     trace.addEvent(e);
-                     checkAdvance(e.timestamp.getTime());
-                  }
-                  tryRetire(trace);
-               } else {
-                  for (Span.LocalEvent event : span.getEvents()) {
-                     if (event.type == Event.Type.OUTCOMING_DATA_STARTED) {
-                        MessageId messageId = (MessageId) event.payload;
-                        Trace traceForThisMessage = retrieveTraceFor(messageId);
-                        Event e = new Event(persister.getNanoTime(), persister.getUnixTime(), event.timestamp,
-                           sourceName, spanCounter.getAndIncrement(), event.threadName, Event.Type.RETRANSMISSION, event.payload);
-                        traceForThisMessage.addEvent(e);
-
-                        decrementMessageRefCount(messageId);
-                        tryRetire(traceForThisMessage);
-                        checkAdvance(e.timestamp.getTime());
-                     } else if (event.type == Event.Type.TRACE_TAG) {
-                        System.err.println(String.format("Warning: Span with trace tag (%s) marked as non-causal (%s line %d)", event.payload, source, persister.getPosition()));
-                     }
-                  }
-               }
-            }, true);
+               }, true);
+            } finally {
+               persister.close();
+            }
             // as we have finished reading, nobody should be blocked by our old timestamp
             highestUnixTimestamps.set(selfIndex, Long.MAX_VALUE);
-            System.err.println("Span counter second pass: " + spanCounter);
+            System.err.println("Span counter second pass: " + spanCounter.get());
          } catch (IOException e) {
-            System.err.println("Error reading " + input + " due to " + e);
+            System.err.println("Error reading " + persister + " due to " + e);
             e.printStackTrace();
             System.exit(1);
          }
@@ -402,12 +419,18 @@ public class Composer extends Logic {
       }
    }
 
-    /**
+   private String getSource(String name) {
+      int dotIndex = name.lastIndexOf('.');
+      return dotIndex < 0 ? name : name.substring(0, dotIndex);
+   }
+
+   /**
      * Sort trace and put into finishedTraces
      * @param trace
      * @throws InterruptedException
      */
    private void retireTrace(Trace trace) throws InterruptedException {
+      injectFlightRecording(trace);
       if (sortCausally) {
          try {
             trace.sortCausally();
@@ -419,6 +442,46 @@ public class Composer extends Logic {
          trace.sortByTimestamps();
       }
       finishedTraces.put(trace);
+   }
+
+   private void injectFlightRecording(Trace trace) {
+      if (flightRecordings.isEmpty()) {
+         return;
+      }
+      Map<Trace.SourcedThread, MinMax> threadOccurences = new HashMap<>();
+      for (Event event : trace.events) {
+         Trace.SourcedThread sourcedThread = new Trace.SourcedThread(event.source, event.threadName);
+         MinMax minMax = threadOccurences.get(sourcedThread);
+         if (minMax == null) {
+            threadOccurences.put(sourcedThread, new MinMax(event.timestamp.getTime()));
+         } else {
+            minMax.accept(event.timestamp.getTime());
+         }
+      }
+      for (Map.Entry<Trace.SourcedThread, MinMax> entry :threadOccurences.entrySet()) {
+         FlightRecording flr = flrBySource.get(entry.getKey().source);
+         if (flr == null) continue;
+         NavigableMap<Long, Event> events = flr.getEvents(entry.getKey().threadName);
+         if (events == null) continue;
+         for (Event event : events.subMap(entry.getValue().min, entry.getValue().max).values()) {
+            trace.addEvent(event);
+         }
+      }
+   }
+
+   private static class MinMax implements LongConsumer {
+      long min, max;
+
+      public MinMax(long value) {
+         this.min = value;
+         this.max = value;
+      }
+
+      @Override
+      public void accept(long value) {
+         this.min = Math.min(min, value);
+         this.max = Math.max(max, value);
+      }
    }
 
    private void decrementMessageRefCount(MessageId message) {
@@ -498,38 +561,4 @@ public class Composer extends Logic {
          this.finished = true;
       }
    }
-
-   /**
-    * Reads span from binary file
-    * @param stream input stream to read data
-    * @return span from the stream
-    * @throws IOException
-    */
-//   public Span readSpan(DataInputStream stream) throws IOException {
-//      Span span = new Span();
-//
-//      if (stream.readBoolean()){
-//         span.setNonCausal();
-//      }
-//      String incoming = stream.readUTF();
-//      if (!incoming.equals("")){
-//         span.setIncoming(incoming);
-//      }
-//
-//      short outcommingCount = stream.readShort();
-//      for (int i = 0; i < outcommingCount; i++){
-//         span.addOutcoming(stream.readUTF());
-//      }
-//      short eventCount = stream.readShort();
-//      for (int i = 0; i < eventCount; i++){
-//         Span.LocalEvent event = new Span.LocalEvent();
-//         event.timestamp = stream.readLong();
-//         event.threadName = stream.readUTF();
-//         //Is there a better way to do this?
-//         event.type = Event.Type.values()[stream.readShort()];
-//         event.payload = stream.readUTF();
-//         span.addEvent(event);
-//      }
-//      return span;
-//   }
 }

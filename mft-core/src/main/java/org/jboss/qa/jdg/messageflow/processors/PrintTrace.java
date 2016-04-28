@@ -34,6 +34,7 @@ import java.util.Set;
 import java.util.TreeSet;
 
 import org.jboss.qa.jdg.messageflow.objects.Event;
+import org.jboss.qa.jdg.messageflow.objects.Header;
 import org.jboss.qa.jdg.messageflow.objects.MessageId;
 import org.jboss.qa.jdg.messageflow.objects.Trace;
 
@@ -131,43 +132,64 @@ public class PrintTrace implements Processor {
          }
          prevEvent = event;
          /* Local time delta */
-         Long prevLocalEventNanoTime = localEvents.get(event.source);
-         if (prevLocalEventNanoTime != null) {
-            out.print(formatNanos(event.nanoTime - prevLocalEventNanoTime));
+         if (event.nanoTime == Long.MIN_VALUE) {
+            out.print("|   ?   |");
          } else {
-            out.print("|       |");
-         }
-         localEvents.put(event.source, event.nanoTime);
-         /* Control flow graph */
-         String sourceThread = event.source + "|" + event.threadName;
-         for (String st : participants) {
-            if (st.equals(sourceThread)) {
-               out.print('*');
+            Long prevLocalEventNanoTime = localEvents.get(event.source);
+            if (prevLocalEventNanoTime != null) {
+               out.print(formatNanos(event.nanoTime - prevLocalEventNanoTime));
             } else {
-               Event lastSourceThreadEvent = lastSourceThreadEvents.get(st);
-               if (lastSourceThreadEvent == null || lastSourceThreadEvent == lastSpanEvents.get(st + "|" + lastSourceThreadEvent.span)) {
-                  out.print(' ');
+               out.print("|       |");
+            }
+            localEvents.put(event.source, event.nanoTime);
+         }
+         /* Control flow graph */
+         // when the graph grows too wide, it doesn't help
+         if (participants.size() < 40) {
+            String sourceThread = event.source + "|" + event.threadName;
+            for (String st : participants) {
+               if (st.equals(sourceThread)) {
+                  out.print('*');
                } else {
-                  out.print('.');
+                  Event lastSourceThreadEvent = lastSourceThreadEvents.get(st);
+                  if (lastSourceThreadEvent == null || lastSourceThreadEvent == lastSpanEvents.get(st + "|" + lastSourceThreadEvent.span)) {
+                     out.print(' ');
+                  } else {
+                     out.print('.');
+                  }
                }
             }
+            lastSourceThreadEvents.put(sourceThread, event);
+            out.print('|');
          }
-         lastSourceThreadEvents.put(sourceThread, event);
-        /* Data */
-         out.print('|');
+         /* Data */
          out.print(event.source);
          out.print('|');
          out.print(truncateOrPad(event.threadName, longestThreadName));
          out.print('|');
          out.print(event.type);
          if (event.payload != null) {
-            out.print(' ');
-            out.print(event.payload);
+            if (event.payload instanceof StackTraceElement[]) {
+               out.println();
+               StackTraceElement[] stackTrace = (StackTraceElement[]) event.payload;
+               for (int i = 0; i < stackTrace.length; ++i) {
+                  out.print("\t\t");
+                  out.println(stackTrace[i]);
+               }
+            } else {
+               out.print(' ');
+               out.println(event.payload);
+            }
+         } else {
+            out.println();
          }
-         out.println();
       }
       out.println();
       outLine++;
+   }
+
+   @Override
+   public void processHeader(Header header) {
    }
 
    private String formatNanos(long nanos) {

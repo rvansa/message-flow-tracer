@@ -23,10 +23,13 @@
 package org.jboss.qa.jdg.messageflow.logic;
 
 import java.io.File;
+import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.PipedInputStream;
 import java.io.PipedOutputStream;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 import net.schmizz.sshj.SSHClient;
 import net.schmizz.sshj.sftp.RemoteFile;
@@ -40,14 +43,6 @@ public class SFTPInput implements Input {
    private final String file;
    private final int port;
    private final String username;
-   private SSHClient ssh;
-   private SFTPClient sftp;
-   private volatile boolean run = true;
-   private RemoteFile.RemoteFileInputStream remoteStream;
-   private PipedOutputStream bufferedOutput;
-   private PipedInputStream bufferedInput;
-   private volatile IOException thrown;
-   private Thread preReader;
 
    public SFTPInput(String username, String host, int port, String file) {
       this.host = host;
@@ -65,30 +60,48 @@ public class SFTPInput implements Input {
    }
 
    @Override
-   public void open() throws IOException {
-      if (remoteStream != null) {
-         close();
+   public int peek(byte[] bytes) throws IOException {
+      SSHClient ssh = new SSHClient();
+      try {
+         ssh.loadKnownHosts();
+         ssh.connect(host, port);
+         ssh.authPublickey(username);
+         SFTPClient sftp = ssh.newSFTPClient();
+         try {
+            final RemoteFile remoteFile = sftp.open(file);
+            return remoteFile.read(0, bytes, 0, bytes.length);
+         } finally {
+            sftp.close();
+         }
+      } finally {
+         ssh.close();
       }
-      ssh = new SSHClient();
+   }
+
+   @Override
+   public InputStream stream() throws IOException {
+      SSHClient ssh = new SSHClient();
       ssh.loadKnownHosts();
       ssh.connect(host, port);
       ssh.authPublickey(username);
-      sftp = ssh.newSFTPClient();
-      final RemoteFile remoteFile = sftp.open(file);
-      bufferedOutput = new PipedOutputStream();
-      bufferedInput = new PipedInputStream(bufferedOutput, 1024 * 1024);
-      remoteStream = remoteFile.getInputStream();
-      preReader = new Thread() {
+      SFTPClient sftp = ssh.newSFTPClient();
+      RemoteFile remoteFile = sftp.open(file);
+      PipedOutputStream bufferedOutput = new PipedOutputStream();
+      PipedInputStream bufferedInput = new PipedInputStream(bufferedOutput, 1024 * 1024);
+      RemoteFile.RemoteFileInputStream remoteStream = remoteFile.getInputStream();
+      AtomicBoolean run = new AtomicBoolean();
+      AtomicReference<IOException> thrown = new AtomicReference<>();
+      Thread preReader = new Thread() {
          @Override
          public void run() {
             byte[] buffer = new byte[1024 * 1024];
             int read;
             try {
-               while (run && (read = remoteStream.read()) >= 0) {
+               while (run.get() && (read = remoteStream.read()) >= 0) {
                   bufferedOutput.write(buffer, 0, read);
                }
             } catch (IOException e) {
-               thrown = new IOException(e);
+               thrown.set(new IOException(e));
             } finally {
                try {
                   try {
@@ -102,41 +115,29 @@ public class SFTPInput implements Input {
                      }
                   }
                } catch (IOException e) {
-                  thrown = new IOException(e);
-               } finally {
-                  remoteStream = null;
-                  bufferedOutput = null;
+                  thrown.set(new IOException(e));
                }
             }
          }
       };
       preReader.setDaemon(true);
       preReader.setName(host + "-reader");
-      thrown = null;
       preReader.start();
-   }
-
-   @Override
-   public InputStream stream() throws IOException {
-      return bufferedInput;
-   }
-
-   @Override
-   public String shortName() {
-      return new File(file).getName();
-   }
-
-   @Override
-   public void close() throws IOException {
-      run = false;
-      try {
-         preReader.join();
-      } catch (InterruptedException e) {
-      } finally {
-         if (thrown != null) {
-            throw thrown;
+      return new FilterInputStream(bufferedInput) {
+         @Override
+         public void close() throws IOException {
+            run.set(false);
+            if (thrown.get() != null) {
+               throw new IOException("Pre-reader thread has thrown an exception", thrown.get());
+            }
+            super.close();
          }
-      }
+      };
+   }
+
+   @Override
+   public String name() {
+      return new File(file).getName();
    }
 
    @Override

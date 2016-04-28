@@ -29,8 +29,8 @@ import java.io.InputStream;
 /**
  * @author Radim Vansa &lt;rvansa@redhat.com&gt;
  */
-public interface Input extends Closeable {
-   void open() throws IOException;
-   String shortName();
+public interface Input {
+   int peek(byte[] bytes) throws IOException;
+   String name();
    InputStream stream() throws IOException;
 }

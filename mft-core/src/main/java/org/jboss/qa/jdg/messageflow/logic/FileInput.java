@@ -34,35 +34,26 @@ import java.io.InputStream;
 public class FileInput implements Input {
    private static int DEFAULT_BUFFER_SIZE = 1024 * 1024;
    private String filename;
-   private InputStream stream;
 
    public FileInput(String filename) {
       this.filename = filename;
    }
 
    @Override
-   public void open() throws IOException {
-      if (stream != null) close();
-      stream = new BufferedInputStream(new FileInputStream(filename), DEFAULT_BUFFER_SIZE);
+   public int peek(byte[] bytes) throws IOException {
+      try (FileInputStream stream = new FileInputStream(filename)) {
+         return stream.read(bytes);
+      }
    }
 
    @Override
    public InputStream stream() throws IOException {
-      return stream;
+      return new BufferedInputStream(new FileInputStream(filename), DEFAULT_BUFFER_SIZE);
    }
 
    @Override
-   public String shortName() {
+   public String name() {
       return new File(filename).getName();
-   }
-
-   @Override
-   public void close() throws IOException {
-      try {
-         stream.close();
-      } finally {
-         stream = null;
-      }
    }
 
    @Override

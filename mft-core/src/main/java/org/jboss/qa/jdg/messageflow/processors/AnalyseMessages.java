@@ -26,10 +26,15 @@ import java.io.PrintStream;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.List;
+import java.util.LongSummaryStatistics;
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Supplier;
 
 import org.jboss.qa.jdg.messageflow.objects.Event;
+import org.jboss.qa.jdg.messageflow.objects.Header;
 import org.jboss.qa.jdg.messageflow.objects.MessageId;
 import org.jboss.qa.jdg.messageflow.objects.Trace;
 
@@ -39,17 +44,18 @@ import org.jboss.qa.jdg.messageflow.objects.Trace;
 public class AnalyseMessages implements Processor {
 
    private static final String NO_TAG = "-no-tag-";
-   private Map<String, TaggedStats> stats = new TreeMap<String, TaggedStats>();
+   private Map<String, TaggedStats> stats = new TreeMap<>();
    private int notSent;
    private int notReceived;
    private PrintStream out = System.out;
+   private long startUnixTime = Long.MAX_VALUE;
 
    private static class TaggedStats {
 
       public String tag;
       public boolean merged;
-      public Map<String, Average> processingDelay = new TreeMap<String, Average>();
-      public Map<String, RouteStats> routeStats = new TreeMap<String, RouteStats>();
+      public Map<String, LongSummaryStatistics> processingDelay = new TreeMap<>();
+      public Map<String, RouteStats> routeStats = new TreeMap<>();
 
       public TaggedStats(String tag) {
          this.tag = tag;
@@ -77,7 +83,7 @@ public class AnalyseMessages implements Processor {
        * The partial results have no actual meaning, the real average difference is only average of the route
        * from first node to second and from second to first (we assume symmetric latency).
        */
-      Average transportDiffs = new Average();
+      ArrayList<LongSummaryStatistics> transportDiffs = new ArrayList<>();
       /*
        * Those that were received but not sent
        */
@@ -125,86 +131,53 @@ public class AnalyseMessages implements Processor {
       }
    }
 
-   private static class Average {
-      private long sum = 0;
-      private int count = 0;
-
-      public void add(long value) {
-         sum += value;
-         ++count;
-      }
-
-      public long get() {
-         return sum/count;
-      }
-
-      public double getFloat() {
-         return (double) sum / (double) count;
-      }
-
-      public long getSum() {
-         return sum;
-      }
-
-      public int getCount() {
-         return count;
-      }
-
-      @Override
-      public boolean equals(Object o) {
-         if (this == o) return true;
-         if (o == null || getClass() != o.getClass()) return false;
-         Average average = (Average) o;
-         return count == average.count && sum == average.sum;
-      }
-   }
-
    @Override
    public void process(Trace trace, long traceCounter) {
       for (MessageId message : trace.messages) {
          ArrayList<Event> sent = new ArrayList<Event>();
-         Map<String, ArrayList<Event>> incoming = new HashMap<String, ArrayList<Event>>();
-         Map<String, TaggedStats> stats = new HashMap<String, TaggedStats>();
+         Map<String, ArrayList<Event>> incoming = new HashMap<>();
+         Map<String, TaggedStats> stats = new HashMap<>();
          // iterating in the time order
          for (Event event : trace.events) {
             if (event.payload == null || !event.payload.equals(message)) continue;
             if (event.type == Event.Type.OUTCOMING_DATA_STARTED || event.type == Event.Type.RETRANSMISSION) {
                sent.add(event);
             } else if (event.type == Event.Type.MSG_PROCESSING_START || event.type == Event.Type.DISCARD) {
-               ArrayList<Event> incomingForSource = incoming.get(event.source);
-               if (incomingForSource == null) {
-                  incomingForSource = new ArrayList<Event>();
-                  incoming.put(event.source, incomingForSource);
-               }
-               Event e = event;
+               Event rx = null;
                //TODO: document why not for discard (currently I don't remember)
                if (event.type == Event.Type.MSG_PROCESSING_START) {
-                  e = findIncoming(trace.events, event.source, event.span);
+                  rx = findIncoming(trace.events, event.source, event.span);
                }
-               incomingForSource.add(e);
+               if (rx != null) {
+                  incoming.computeIfAbsent(event.source, a -> new ArrayList<>()).add(rx);
+               }
                stats.putAll(findTaggedStats(trace.events, event.source, event.span));
             }
          }
          if (stats.isEmpty()) {
-            stats.put(NO_TAG, getTaggedStats(NO_TAG));
+            stats.put(NO_TAG, this.stats.computeIfAbsent(NO_TAG, t -> new TaggedStats(t)));
          }
          for (Event event : trace.events) {
             if (event.payload == null || !event.payload.equals(message)) continue;
             if (event.type == Event.Type.MSG_PROCESSING_START) {
                Event rx = findIncoming(trace.events, event.source, event.span);
-               for (TaggedStats ts : stats.values()) {
-                  getAverage(ts.processingDelay, rx.source).add(event.nanoTime - rx.nanoTime);
+               if (rx == null) {
+                  // message was not sent over wire, it's a broadcast
+               } else {
+                  for (TaggedStats ts : stats.values()) {
+                     ts.processingDelay.computeIfAbsent(rx.source, a -> new LongSummaryStatistics()).accept(event.nanoTime - rx.nanoTime);
+                  }
                }
             }
          }
          // let's assume that if the message was really lost, it was the first message, if there are
          // more receptions, these are in the end and combination of these two is rare
          for (ArrayList<Event> incomingForSource : incoming.values()) {
-            int shiftIndex = Math.max(sent.size() - incomingForSource.size(), 0);
             if (sent.isEmpty()) {
                // we don't know who sent that, cannot produce any stats
                continue;
             }
+            int shiftIndex = Math.max(sent.size() - incomingForSource.size(), 0);
 
             if (incomingForSource.get(0) == null) {
                  incomingForSource.remove(0);
@@ -218,7 +191,8 @@ public class AnalyseMessages implements Processor {
                Event rx = incomingForSource.get(i);
                long diff = rx.nanoTime - tx.nanoTime;
                for (TaggedStats ts : stats.values()) {
-                  getRouteStats(ts.routeStats, route).transportDiffs.add(diff);
+                  int index = (int) TimeUnit.MILLISECONDS.toSeconds(tx.timestamp.getTime() - startUnixTime);
+                  getOrAdd(ts.routeStats.computeIfAbsent(route, r -> new RouteStats()).transportDiffs, index, LongSummaryStatistics::new).accept(diff);
                }
             }
             int discarded = 0;
@@ -228,14 +202,14 @@ public class AnalyseMessages implements Processor {
                }
             }
             for (TaggedStats ts : stats.values()) {
-               RouteStats routeStats = getRouteStats(ts.routeStats, route);
+               RouteStats routeStats = ts.routeStats.get(route);
                routeStats.duplicates += Math.max(incomingForSource.size() - sent.size(), 0);
                routeStats.lost += shiftIndex;
                routeStats.ignored += incomingForSource.size() - discarded - 1;
                routeStats.discarded += discarded;
                routeStats.uniqueMessages++;
-               routeStats.totalSent = sent.size();
-               routeStats.totalReceived = incomingForSource.size();
+               routeStats.totalSent += sent.size();
+               routeStats.totalReceived += incomingForSource.size();
             }
          }
          if (incoming.isEmpty()) {
@@ -247,42 +221,35 @@ public class AnalyseMessages implements Processor {
       }
    }
 
-   private Average getAverage(Map<String, Average> map, String key) {
-      Average avg = map.get(key);
-      if (avg == null) {
-         avg = new Average();
-         map.put(key, avg);
+   private <T> T getOrAdd(List<T> list, int index, Supplier<T> supplier) {
+      int size = list.size();
+      if (index < size) {
+         return list.get(index);
+      } else {
+         for (int i = size; i < index; ++i) {
+            list.add(supplier.get());;
+         }
+         T last = supplier.get();
+         list.add(last);
+         return last;
       }
-      return avg;
    }
 
-   private RouteStats getRouteStats(Map<String, RouteStats> map, String key) {
-      RouteStats avg = map.get(key);
-      if (avg == null) {
-         avg = new RouteStats();
-         map.put(key, avg);
-      }
-      return avg;
+   @Override
+   public synchronized void processHeader(Header header) {
+      startUnixTime = Math.min(header.getUnixTime(), startUnixTime);
    }
 
    private Map<String, TaggedStats> findTaggedStats(Collection<Event> events, String source, int span) {
       Map<String, TaggedStats> tags = new HashMap<String, TaggedStats>();
       for (Event event : events) {
          if (event.source == source && event.span == span && event.type == Event.Type.MESSAGE_TAG) {
-            TaggedStats stats = getTaggedStats((String) event.payload);
-            tags.put((String) event.payload, stats);
+            String tag = (String) event.payload;
+            TaggedStats stats = this.stats.computeIfAbsent(tag, t -> new TaggedStats(t));
+            tags.put(tag, stats);
          }
       }
       return tags;
-   }
-
-   private TaggedStats getTaggedStats(String tag) {
-      TaggedStats stats = this.stats.get(tag);
-      if (stats == null) {
-         stats = new TaggedStats(tag);
-         this.stats.put(tag, stats);
-      }
-      return stats;
    }
 
    private Event findIncoming(Collection<Event> events, String source, int span) {
@@ -319,10 +286,15 @@ public class AnalyseMessages implements Processor {
       }
       for (TaggedStats stats : this.stats.values()) {
          if (stats.merged) continue;
+         long totalSentOnAllNodes = stats.routeStats.values().stream().mapToLong(rs -> rs.totalSent).sum();
+         if (totalSentOnAllNodes < 30) {
+            out.println(stats.tag + ": " + totalSentOnAllNodes + " messages");
+            continue;
+         }
          out.println(stats.tag);
          out.println("\tIncoming to message processing times:");
-         for (Map.Entry<String, Average> entry : stats.processingDelay.entrySet()) {
-            out.printf("\t\t%s:\t%.2f us\n", entry.getKey(), entry.getValue().getFloat() / 1000);
+         for (Map.Entry<String, LongSummaryStatistics> entry : stats.processingDelay.entrySet()) {
+            out.printf("\t\t%s:\t%.2f us\n", entry.getKey(), entry.getValue().getAverage() / 1000);
          }
          out.println("\tTransport:");
          double averageLatency = 0;
@@ -344,11 +316,19 @@ public class AnalyseMessages implements Processor {
                forward.printTo(out);
                out.println();
             } else if (parts[0].compareTo(parts[1]) < 0) {
-               double latency = (forward.transportDiffs.getFloat() + back.transportDiffs.getFloat()) / 2000;
+               double latency = (forward.transportDiffs.stream().reduce(new LongSummaryStatistics(), this::merge).getAverage()
+                  + back.transportDiffs.stream().reduce(new LongSummaryStatistics(), this::merge).getAverage()) / 2000;
                averageLatency += latency;
                latencyCount++;
-               out.printf("\t\t%s\t<-> %s:\tlatency %5.2f us\n", parts[0], parts[1], latency);
-               out.printf("\t\t%s\t -> %s:\t", parts[0], parts[1]);
+               out.printf("\t\t%s\t<-> %s:\tlatency %5.2f us", parts[0], parts[1], latency);
+               int minDiffs = Math.min(forward.transportDiffs.size(), back.transportDiffs.size());
+               for (int i = 0; i < minDiffs; i += 8) {
+                  out.print("\n\t\t\t\t");
+                  for (int j = 0; j < 8 && i + j < minDiffs; ++j) {
+                     out.printf("%5.2f us\t", (forward.transportDiffs.get(i + j).getAverage() + back.transportDiffs.get(i + j).getAverage()) / 2000);
+                  }
+               }
+               out.printf("\n\t\t%s\t -> %s:\t", parts[0], parts[1]);
                forward.printTo(out);
                out.println();
                out.printf("\t\t%s\t<-  %s:\t", parts[0], parts[1]);
@@ -364,5 +344,12 @@ public class AnalyseMessages implements Processor {
       }
       out.printf("Transmission of %d messages not detected.\n", notSent);
       out.printf("%d messages have not been received at all.\n", notReceived);
+   }
+
+   private LongSummaryStatistics merge(LongSummaryStatistics s1, LongSummaryStatistics s2) {
+      LongSummaryStatistics sum = new LongSummaryStatistics();
+      sum.combine(s1);
+      sum.combine(s2);
+      return sum;
    }
 }

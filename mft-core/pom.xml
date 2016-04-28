@@ -48,8 +48,37 @@
          <groupId>org.jboss.byteman</groupId>
          <artifactId>byteman</artifactId>
          <version>3.0.5</version>
+         <scope>provided</scope>
+      </dependency>
+      <dependency>
+         <groupId>com.rockit.mc</groupId>
+         <artifactId>flightrecorder</artifactId>
+         <version>${java.mission.control.version}</version>
+         <scope>system</scope>
+         <systemPath>${java.home}/../lib/missioncontrol/plugins/com.jrockit.mc.flightrecorder_${java.mission.control.version}.jar</systemPath>
+      </dependency>
+      <dependency>
+         <groupId>com.rockit.mc</groupId>
+         <artifactId>commons</artifactId>
+         <version>${java.mission.control.version}</version>
+         <scope>system</scope>
+         <systemPath>${java.home}/../lib/missioncontrol/plugins/com.jrockit.mc.common_${java.mission.control.version}.jar</systemPath>
       </dependency>
    </dependencies>
+
+   <profiles>
+      <profile>
+         <id>default-mission-control</id>
+         <activation>
+            <property>
+               <name>!java.mission.control.version</name>
+            </property>
+         </activation>
+         <properties>
+            <java.mission.control.version>5.5.0.165303</java.mission.control.version>
+         </properties>
+      </profile>
+   </profiles>
 
    <build>
       <plugins>

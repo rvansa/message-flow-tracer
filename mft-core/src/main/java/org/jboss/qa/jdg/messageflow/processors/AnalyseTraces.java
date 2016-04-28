@@ -32,6 +32,7 @@ import java.util.TreeMap;
 import java.util.TreeSet;
 
 import org.jboss.qa.jdg.messageflow.objects.Event;
+import org.jboss.qa.jdg.messageflow.objects.Header;
 import org.jboss.qa.jdg.messageflow.objects.MessageId;
 import org.jboss.qa.jdg.messageflow.objects.Trace;
 
@@ -138,6 +139,10 @@ public class AnalyseTraces implements Processor {
       stats.wallTime.add(trace.events.get(trace.events.size() - 1).timestamp.getTime() - trace.events.get(0).timestamp.getTime());
       stats.threads.add(threads);
 
+   }
+
+   @Override
+   public void processHeader(Header header) {
    }
 
    @Override
