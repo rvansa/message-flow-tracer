@@ -272,6 +272,7 @@ ENDRULE
 RULE lockFail
 CLASS org.infinispan.util.concurrent.locks.impl.DefaultLockManager$KeyAwareExtendedLockPromise
 METHOD lock
+NOCOMPILE
 AT THROW
 IF TRUE
 DO
@@ -416,4 +417,105 @@ AT EXIT
 IF TRUE
 DO
   threadProcessingCompleted();
+ENDRULE
+
+
+################
+# TcpTransport #
+################
+
+RULE TcpTransport_writeAndRecordRequest
+CLASS org.infinispan.remoting.transport.tcp.TcpTransport
+METHOD writeAndRecordRequest
+AT LINE 252
+IF TRUE
+DO
+  outcomingStarted(null, new org.mft.objects.MessageId$Impl(org.mft.objects.MessageId.NODE_ID, $1.nodeId, $requestId));
+ENDRULE
+
+RULE TcpTransport_writeAndRecordRequest_end
+CLASS org.infinispan.remoting.transport.tcp.TcpTransport
+METHOD writeAndRecordRequest
+AT LINE 264
+IF TRUE
+DO
+  outcomingFinished();
+ENDRULE
+
+RULE TcpTransport_writeResponse
+CLASS org.infinispan.remoting.transport.tcp.TcpTransport
+METHOD writeResponse
+AT LINE 308
+IF TRUE
+DO
+  outcomingStarted(null, new org.mft.objects.MessageId$Impl(org.mft.objects.MessageId.NODE_ID, $1.nodeId, -1 - $requestId));
+ENDRULE
+
+RULE TcpTransport_writeResponse_end
+CLASS org.infinispan.remoting.transport.tcp.TcpTransport
+METHOD writeResponse
+AT LINE 317
+IF TRUE
+DO
+  outcomingFinished();
+ENDRULE
+
+RULE TcpTransport_readChannel_entry
+CLASS org.infinispan.remoting.transport.tcp.TcpTransport$ReadChannel
+METHOD run
+NOCOMPILE
+AT ENTRY
+IF TRUE
+DO
+  threadProcessingCompleted();
+ENDRULE
+
+
+RULE TcpTransport_readChannel
+CLASS org.infinispan.remoting.transport.tcp.TcpTransport$ReadChannel
+METHOD run
+NOCOMPILE
+AT INVOKE ByteBuffer.clear
+IF TRUE
+DO
+  incomingDataAndHandling($size, new org.mft.objects.MessageId$Impl($0.connection.nodeId, org.mft.objects.MessageId.NODE_ID, $type == 2 ? -1 - java.lang.Long.valueOf($requestId).intValue(): java.lang.Long.valueOf($requestId).intValue()));
+ENDRULE
+
+RULE TcpTransport_readChannel_end
+CLASS org.infinispan.remoting.transport.tcp.TcpTransport$ReadChannel
+METHOD run
+NOCOMPILE
+AFTER INVOKE Executor.execute
+IF TRUE
+DO
+  threadProcessingCompleted();
+ENDRULE
+
+RULE TcpTransport_readChannel_end_lazy
+CLASS org.infinispan.remoting.transport.tcp.TcpTransport$ReadChannel
+METHOD run
+NOCOMPILE
+AFTER INVOKE ConcurrentMap.remove
+IF TRUE
+DO
+  threadProcessingCompleted();
+ENDRULE
+
+RULE TcpTransport_responseTimeout
+CLASS org.infinispan.remoting.transport.tcp.TcpTransport
+METHOD responseTimeout
+AFTER INVOKE ConcurrentMap.remove
+IF TRUE
+DO
+  checkpoint(String.valueOf($3) + " -> " + $!);
+ENDRULE
+
+RULE TcpTransport_responseReceived
+CLASS org.infinispan.remoting.transport.tcp.TcpTransport$HandleData
+METHOD run
+NOCOMPILE
+AFTER INVOKE ConcurrentMap.remove
+IF TRUE
+DO
+  checkpoint(String.valueOf($0.requestId) + " -> " + $!);
 ENDRULE

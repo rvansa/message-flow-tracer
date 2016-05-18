@@ -2,8 +2,10 @@ package org.mft.persistence;
 
 import org.mft.objects.Event;
 import org.mft.objects.Header;
+import org.mft.objects.Message;
 import org.mft.objects.MessageId;
 import org.mft.objects.Span;
+import org.mft.objects.ThreadChange;
 
 import java.io.BufferedOutputStream;
 import java.io.DataInputStream;
@@ -26,8 +28,10 @@ public class BinaryPersister extends Persister {
    public static final byte[] TAG = new byte[]{'M', 'F', 'T', 'B'};
    private static final byte NULL = 0;
    private static final byte TEXT = 1;
-   private static final byte MESSAGE = 2;
+   private static final byte MESSAGE_ID = 2;
    private static final byte BATCH = 3;
+   private static final byte IDENTITY_HASH_CODE = 4;
+   private static final byte MESSAGE = 5;
 
    private DataInputStream inputStream;
    private DataOutputStream outputStream = null;
@@ -78,20 +82,11 @@ public class BinaryPersister extends Persister {
          }
       }
       Collection<Span.LocalEvent> events = sort ? span.getSortedEvents() : span.getEvents();
-      Map<String, Integer> threadTable = new LinkedHashMap<>();
-      for (Span.LocalEvent event : events) {
-         if (!threadTable.containsKey(event.threadName))
-            threadTable.put(event.threadName, threadTable.size());
-      }
-      outputStream.writeShort(threadTable.size());
-      for (String threadName : threadTable.keySet()) {
-         writeString(threadName);
-      }
       int eventCount = span.getEvents() != null ? span.getEvents().size() : 0;
       outputStream.writeShort(eventCount);
       for (Span.LocalEvent event : events){
          outputStream.writeLong(event.timestamp);
-         outputStream.writeShort(threadTable.get(event.threadName).shortValue());
+         outputStream.writeLong(event.threadId);
          outputStream.writeByte(event.type.ordinal());
          if (event.payload == null) {
             outputStream.writeByte(NULL);
@@ -100,7 +95,7 @@ public class BinaryPersister extends Persister {
             writeString((String) event.payload);
          } else if (event.payload instanceof MessageId) {
             MessageId msg = (MessageId) event.payload;
-            outputStream.writeByte(MESSAGE);
+            outputStream.writeByte(MESSAGE_ID);
             outputStream.writeShort(msg.from());
             outputStream.writeInt(msg.id());
          } else if (event.payload instanceof List) {
@@ -111,6 +106,15 @@ public class BinaryPersister extends Persister {
                outputStream.writeShort(msg.from());
                outputStream.writeInt(msg.id());
             }
+         } else if (event.payload instanceof Message) {
+            Message msg = (Message) event.payload;
+            outputStream.writeByte(MESSAGE);
+            outputStream.writeShort(msg.id().from());
+            outputStream.writeInt(msg.id().id());
+            outputStream.writeInt(msg.identityHashCode());
+         } else if (event.payload instanceof Integer) {
+            outputStream.writeByte(IDENTITY_HASH_CODE);
+            outputStream.writeInt((Integer) event.payload);
          }
       }
    }
@@ -136,42 +140,48 @@ public class BinaryPersister extends Persister {
    }
 
    @Override
-   public void read(Consumer<Span> spanConsumer, boolean loadEvents) throws IOException {
+   public void read() throws IOException {
       try {
          for (;;) {
             byte flags = inputStream.readByte();
-            Span span = new Span();
-            if ((flags & 1) != 0) {
-               span.setNonCausal();
+            if ((flags & 64) != 0) {
+               threadChangeConsumer.accept(readThreadChange());
+            } else {
+               spanConsumer.accept(readSpan(flags));
             }
-            if ((flags & 2) == 0) {
-               span.setIncoming(new MessageId.Impl(inputStream.readShort(), inputStream.readInt()));
-            }
-            int outcomingCount = inputStream.readShort();
-            for (int i = 0; i < outcomingCount; ++i) {
-               span.addOutcoming(new MessageId.Impl(inputStream.readShort(), inputStream.readInt()));
-            }
-            // TODO: don't ignore loadEvents
-            int threadTableSize = inputStream.readShort();
-            String[] threadNames = new String[threadTableSize];
-            for (int i = 0; i < threadNames.length; ++i) {
-               threadNames[i] = readString();
-            }
-            int eventCount = inputStream.readShort();
-            for (int i = 0; i < eventCount; ++i) {
-               span.addEvent(new Span.LocalEvent(inputStream.readLong(), threadNames[inputStream.readShort()],
-                  Event.Type.values()[inputStream.readByte()], readObject()));
-            }
-            spanConsumer.accept(span);
          }
       } catch (EOFException e) {}
+   }
+
+   private ThreadChange readThreadChange() throws IOException {
+      return new ThreadChange(readString(), inputStream.readLong(), inputStream.readLong());
+   }
+
+   private Span readSpan(byte flags) throws IOException {
+      Span span = new Span();
+      if ((flags & 1) != 0) {
+         span.setNonCausal();
+      }
+      if ((flags & 2) == 0) {
+         span.setIncoming(new MessageId.Impl(inputStream.readShort(), inputStream.readInt()));
+      }
+      int outcomingCount = inputStream.readShort();
+      for (int i = 0; i < outcomingCount; ++i) {
+         span.addOutcoming(new MessageId.Impl(inputStream.readShort(), inputStream.readInt()));
+      }
+      int eventCount = inputStream.readShort();
+      for (int i = 0; i < eventCount; ++i) {
+         span.addEvent(new Span.LocalEvent(inputStream.readLong(), inputStream.readLong(),
+            Event.Type.values()[inputStream.readByte()], readObject()));
+      }
+      return span;
    }
 
    private Object readObject() throws IOException {
       switch (inputStream.readByte()) {
          case NULL: return null;
          case TEXT: return readString();
-         case MESSAGE: return new MessageId.Impl(inputStream.readShort(), inputStream.readInt());
+         case MESSAGE_ID: return new MessageId.Impl(inputStream.readShort(), inputStream.readInt());
          case BATCH: {
             int num = inputStream.readShort();
             List<MessageId> batch = new ArrayList<>(num);
@@ -180,6 +190,8 @@ public class BinaryPersister extends Persister {
             }
             return batch;
          }
+         case MESSAGE: return new Message(new MessageId.Impl(inputStream.readShort(), inputStream.readInt()), inputStream.readInt());
+         case IDENTITY_HASH_CODE: return inputStream.readInt();
          default: throw new IllegalArgumentException();
       }
    }
@@ -196,5 +208,13 @@ public class BinaryPersister extends Persister {
    @Override
    public int getPosition() {
       return 0;
+   }
+
+   @Override
+   public void write(ThreadChange threadChange) throws IOException {
+      outputStream.writeByte(64);
+      writeString(threadChange.getThreadName());
+      outputStream.writeLong(threadChange.getNanoTime());
+      outputStream.writeLong(threadChange.getId());
    }
 }

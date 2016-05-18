@@ -1,9 +1,14 @@
 package org.mft.objects;
 
+import java.util.Optional;
+
 /**
  * @author Radim Vansa &lt;rvansa@redhat.com&gt;
  */
 public interface MessageId {
+   short NODE_ID = Optional.ofNullable(Integer.getInteger("org.mft.nodeId"))
+      .orElseThrow(() -> new IllegalStateException("This node does not have identifier set.")).shortValue();
+
    short from();
 
    /**
@@ -15,8 +20,19 @@ public interface MessageId {
       private final short from;
       private final int id;
 
+      public Impl(int id) {
+         this.from = NODE_ID;
+         this.id = id;
+      }
+
       public Impl(short from, int id) {
          this.from = from;
+         this.id = id;
+      }
+
+      // hack when id is not unique across destinations
+      public Impl(short from, short to, int id) {
+         this.from = (short) ((from << 5) ^ (to << 10));
          this.id = id;
       }
 

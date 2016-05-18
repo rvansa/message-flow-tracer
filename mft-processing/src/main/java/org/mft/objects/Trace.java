@@ -23,6 +23,8 @@
 package org.mft.objects;
 
 import java.util.*;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Function;
@@ -41,7 +43,31 @@ public class Trace {
    public Trace mergedInto = null;
 
    // this lock both against internal manipulation AND removing/replacing in messageFlows
-   public Lock lock = new ReentrantLock();
+   private final Lock lock = new ReentrantLock();
+
+   public void lock() {
+      try {
+         if (lock.tryLock(5, TimeUnit.SECONDS)) {
+         } else {
+            throw new RuntimeException(new TimeoutException());
+         }
+      } catch (InterruptedException e) {
+         Thread.currentThread().interrupt();
+         throw new IllegalStateException(e);
+      }
+   }
+
+   public boolean tryLock() {
+      if (lock.tryLock()) {
+         return true;
+      } else {
+         return false;
+      }
+   }
+
+   public void unlock() {
+      lock.unlock();
+   }
 
    public void addMessage(MessageId msg) {
       messages.add(msg);
@@ -79,9 +105,10 @@ public class Trace {
       Map<MessageId, Event> outcomings = new HashMap<>();
       for (Event e : events) {
          if (e.type == Event.Type.OUTCOMING_DATA_STARTED || e.type == Event.Type.RETRANSMISSION) {
-            Event out = outcomings.get(e.payload);
+            MessageId msgId = ((Message) e.payload).id();
+            Event out = outcomings.get(msgId);
             if (out == null || out.nanoTime > e.nanoTime) {
-               outcomings.put((MessageId) e.payload, e);
+               outcomings.put(msgId, e);
             }
          }
       }
@@ -90,8 +117,9 @@ public class Trace {
       Map<String, Long> graph = new HashMap<String, Long>();
       Set<String> vertices = new HashSet<String>();
       for (Event e : outcomings.values()) {
-         availableTransmissions.add((MessageId) e.payload);
-         Set<Event> incoming = incomingEvents.get(e.payload);
+         MessageId msgId = ((Message) e.payload).id();
+         availableTransmissions.add(msgId);
+         Set<Event> incoming = incomingEvents.get(msgId);
          if (incoming != null) {
             for (Event inc : incoming) {
                if (inc.source == e.source && inc.nanoTime < e.nanoTime) {
@@ -212,24 +240,25 @@ public class Trace {
          delayCauses.put(e, sourceDelay);
       } else {
          if (e.type == Event.Type.OUTCOMING_DATA_STARTED || e.type == Event.Type.RETRANSMISSION) {
-            transmissions.add((MessageId) e.payload);
+            MessageId msgId = ((Message) e.payload).id();
+            transmissions.add(msgId);
             finalEvents.add(e);
             // remove source delay before flushing the delayed events
             for (Iterator<Set<MessageId>> iterator = delayingSources.values().iterator(); iterator.hasNext(); ) {
                Set<MessageId> pending = iterator.next();
-               pending.remove(e.payload);
+               pending.remove(msgId);
                if (pending.isEmpty()) {
                   iterator.remove();
                }
             }
-            List<Event> list = delayedEvents.remove(e.payload);
+            List<Event> list = delayedEvents.remove(msgId);
             if (list != null) {
                for (Event delayed : list) {
                   Set<MessageId> cause = delayCauses.get(delayed);
                   if (cause == null) {
                      if (!finalEvents.contains(delayed)) throw new IllegalStateException();
                   } else {
-                     cause.remove(e.payload);
+                     cause.remove(msgId);
                      if (cause.isEmpty()) {
                         delayCauses.remove(delayed);
                         tryFlushEvent(delayed, finalEvents, delayedEvents, transmissions, availableTransmissions, delayingSources, delayCauses);

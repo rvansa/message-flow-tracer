@@ -35,6 +35,7 @@ import java.util.TreeSet;
 
 import org.mft.objects.Event;
 import org.mft.objects.Header;
+import org.mft.objects.Message;
 import org.mft.objects.MessageId;
 import org.mft.objects.Trace;
 
@@ -77,9 +78,15 @@ public class PrintTrace implements Processor {
          String src = null;
          ArrayList<String> dest = new ArrayList<String>();
          for (Event e : trace.events) {
-            if (e.payload == null || !e.payload.equals(message)) continue;
-            if (e.type == Event.Type.OUTCOMING_DATA_STARTED) src = e.source;
-            else if (e.type == Event.Type.MSG_PROCESSING_START) dest.add(e.source);
+            if (e.type == Event.Type.OUTCOMING_DATA_STARTED) {
+               if (message.equals(((Message) e.payload).id())) {
+                  src = e.source;
+               }
+            } else if (e.type == Event.Type.MSG_PROCESSING_START) {
+               if (message.equals(e.payload)) {
+                  dest.add(e.source);
+               }
+            }
          }
          out.printf("%s\t-> ", src == null ? "-unknown-" : src);
          if (dest.isEmpty()) {

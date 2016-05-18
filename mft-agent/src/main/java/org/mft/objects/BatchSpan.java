@@ -33,14 +33,17 @@ import java.util.Map;
  */
 public class BatchSpan extends Span {
 
-   private Map<MessageId, Span> childrenMap = new HashMap<>();
-   private ThreadLocal<MessageId> currentMessage = new ThreadLocal<>();
+   private final Map<MessageId, Span> childrenMap;
+   private final Map<Thread, Span> currentSpan = new HashMap<>(4);
    private Span suppressed;
 
-   private BatchSpan() {}
+   private BatchSpan() {
+      childrenMap = new HashMap<>(4);
+   }
 
-   private BatchSpan(Span parent) {
+   private BatchSpan(Span parent, int numChildren) {
       super(parent);
+      childrenMap = new HashMap<>(numChildren);
    }
 
     /**
@@ -50,7 +53,7 @@ public class BatchSpan extends Span {
      * @return
      */
    public static BatchSpan newChild(Span parent, List<MessageId> messageIds) {
-      BatchSpan batchSpan = new BatchSpan(parent);
+      BatchSpan batchSpan = new BatchSpan(parent, messageIds.size());
       for (MessageId msg : messageIds) {
          Span child = new Span(batchSpan);
          child.addEvent(Event.Type.CONTAINS, msg);
@@ -71,14 +74,19 @@ public class BatchSpan extends Span {
       return batchSpan;
    }
 
-   public void push(MessageId message) {
-      currentMessage.set(message);
-      addEvent(Event.Type.MSG_PROCESSING_START, message);
+   public synchronized void push(MessageId message) {
+      Span child = getChild(message);
+      currentSpan.put(Thread.currentThread(), child);
+      child.addEvent(Event.Type.MSG_PROCESSING_START, message);
    }
 
-   public void pop() {
-      addEvent(Event.Type.MSG_PROCESSING_END, null);
-      currentMessage.remove();
+   public synchronized void pop() {
+      Span span = currentSpan.remove(Thread.currentThread());
+      if (span != null) {
+         span.addEvent(Event.Type.MSG_PROCESSING_END, null);
+      } else {
+         throw new IllegalStateException();
+      }
    }
 
    public Span getSuppressed() {
@@ -86,42 +94,42 @@ public class BatchSpan extends Span {
    }
 
    @Override
-   public Span getCurrent() {
-      MessageId currentMessage = this.currentMessage.get();
-      if (currentMessage == null) {
+   public synchronized Span getCurrent() {
+      Span current = this.currentSpan.get(Thread.currentThread());
+      if (current == null) {
          return this;
       } else {
-         return getChild(currentMessage);
+         return current;
       }
    }
 
    @Override
    public void addOutcoming(MessageId identifier) {
-      MessageId currentMessage = this.currentMessage.get();
-      if (currentMessage == null) {
+      Span current = this.currentSpan.get(Thread.currentThread());
+      if (current == null) {
          super.addOutcoming(identifier);
       } else {
-         getChild(currentMessage).addOutcoming(identifier);
+         current.addOutcoming(identifier);;
       }
    }
 
    @Override
    public void addEvent(Event.Type type, Object payload) {
-      MessageId currentMessage = this.currentMessage.get();
-      if (currentMessage == null) {
-         super.addEvent(type, payload);
+      Span current = this.currentSpan.get(Thread.currentThread());
+      if (current == null) {
+         super.addEvent(type, payload);;
       } else {
-         getChild(currentMessage).addEvent(type, payload);
+         current.addEvent(type, payload);;
       }
    }
 
    @Override
    public void setNonCausal() {
-      MessageId currentMessage = this.currentMessage.get();
-      if (currentMessage == null) {
+      Span current = this.currentSpan.get(Thread.currentThread());
+      if (current == null) {
          super.setNonCausal();
       } else {
-         getChild(currentMessage).setNonCausal();
+         current.setNonCausal();
       }
    }
 

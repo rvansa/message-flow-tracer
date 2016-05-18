@@ -23,18 +23,23 @@
 package org.mft.processors;
 
 import java.io.PrintStream;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.LongSummaryStatistics;
 import java.util.Map;
+import java.util.Optional;
 import java.util.TreeMap;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
+import java.util.logging.SimpleFormatter;
 
 import org.mft.objects.Event;
 import org.mft.objects.Header;
+import org.mft.objects.Message;
 import org.mft.objects.MessageId;
 import org.mft.objects.Trace;
 
@@ -55,6 +60,7 @@ public class AnalyseMessages implements Processor {
       public String tag;
       public boolean merged;
       public Map<String, LongSummaryStatistics> processingDelay = new TreeMap<>();
+      public Map<String, LongSummaryStatistics> bundlerDelay = new TreeMap<>();
       public Map<String, RouteStats> routeStats = new TreeMap<>();
 
       public TaggedStats(String tag) {
@@ -84,6 +90,7 @@ public class AnalyseMessages implements Processor {
        * from first node to second and from second to first (we assume symmetric latency).
        */
       ArrayList<LongSummaryStatistics> transportDiffs = new ArrayList<>();
+      ArrayList<LongSummaryStatistics> transportWallClock = new ArrayList<>();
       /*
        * Those that were received but not sent
        */
@@ -133,16 +140,21 @@ public class AnalyseMessages implements Processor {
 
    @Override
    public void process(Trace trace, long traceCounter) {
-      for (MessageId message : trace.messages) {
+      for (MessageId msgId : trace.messages) {
          ArrayList<Event> sent = new ArrayList<Event>();
          Map<String, ArrayList<Event>> incoming = new HashMap<>();
          Map<String, TaggedStats> stats = new HashMap<>();
          // iterating in the time order
          for (Event event : trace.events) {
-            if (event.payload == null || !event.payload.equals(message)) continue;
             if (event.type == Event.Type.OUTCOMING_DATA_STARTED || event.type == Event.Type.RETRANSMISSION) {
+               if (!((Message) event.payload).id().equals(msgId)) {
+                  continue;
+               }
                sent.add(event);
             } else if (event.type == Event.Type.MSG_PROCESSING_START || event.type == Event.Type.DISCARD) {
+               if (!event.payload.equals(msgId)) {
+                  continue;
+               }
                Event rx = null;
                //TODO: document why not for discard (currently I don't remember)
                if (event.type == Event.Type.MSG_PROCESSING_START) {
@@ -158,8 +170,23 @@ public class AnalyseMessages implements Processor {
             stats.put(NO_TAG, this.stats.computeIfAbsent(NO_TAG, t -> new TaggedStats(t)));
          }
          for (Event event : trace.events) {
-            if (event.payload == null || !event.payload.equals(message)) continue;
-            if (event.type == Event.Type.MSG_PROCESSING_START) {
+            if (event.type == Event.Type.OUTCOMING_DATA_STARTED) {
+               Message msg = (Message) event.payload;
+               if (!msg.id().equals(msgId) || msg.identityHashCode() == 0) {
+                  continue;
+               }
+               Optional<Event> oth = trace.events.stream().filter(
+                  e -> e.type == Event.Type.THREAD_HANDOVER_STARTED &&
+                     e.span == event.span && getAnnotationHash(e) == msg.identityHashCode()).findFirst();
+               oth.ifPresent(th -> {
+                  for (TaggedStats ts : stats.values()) {
+                     ts.bundlerDelay.computeIfAbsent(event.source, a -> new LongSummaryStatistics()).accept(event.nanoTime - th.nanoTime);
+                  }
+               });
+            } else if (event.type == Event.Type.MSG_PROCESSING_START) {
+               if (!msgId.equals(event.payload)) {
+                  continue;
+               }
                Event rx = findIncoming(trace.events, event.source, event.span);
                if (rx == null) {
                   // message was not sent over wire, it's a broadcast
@@ -192,7 +219,9 @@ public class AnalyseMessages implements Processor {
                long diff = rx.nanoTime - tx.nanoTime;
                for (TaggedStats ts : stats.values()) {
                   int index = (int) TimeUnit.MILLISECONDS.toSeconds(tx.timestamp.getTime() - startUnixTime);
-                  getOrAdd(ts.routeStats.computeIfAbsent(route, r -> new RouteStats()).transportDiffs, index, LongSummaryStatistics::new).accept(diff);
+                  RouteStats routeStats = ts.routeStats.computeIfAbsent(route, r -> new RouteStats());
+                  getOrAdd(routeStats.transportDiffs, index, LongSummaryStatistics::new).accept(diff);
+                  getOrAdd(routeStats.transportWallClock, index, LongSummaryStatistics::new).accept(rx.timestamp.getTime() - tx.timestamp.getTime());
                }
             }
             int discarded = 0;
@@ -219,6 +248,16 @@ public class AnalyseMessages implements Processor {
             notSent++;
          }
       }
+   }
+
+   public int getAnnotationHash(Event e) {
+      if (e.payload instanceof Integer) return (Integer) e.payload;
+      if (e.payload instanceof String) {
+         String str = (String) e.payload;
+         int index = str.lastIndexOf(':');
+         return (int) Long.parseLong(index < 0 ? str: str.substring(index + 1), 16);
+      }
+      throw new IllegalArgumentException(String.valueOf(e.payload));
    }
 
    private <T> T getOrAdd(List<T> list, int index, Supplier<T> supplier) {
@@ -292,9 +331,10 @@ public class AnalyseMessages implements Processor {
             continue;
          }
          out.println(stats.tag);
-         out.println("\tIncoming to message processing times:");
+         out.println("\tMessage processing times:");
          for (Map.Entry<String, LongSummaryStatistics> entry : stats.processingDelay.entrySet()) {
-            out.printf("\t\t%s:\t%.2f us\n", entry.getKey(), entry.getValue().getAverage() / 1000);
+            LongSummaryStatistics bundlerDelay = stats.bundlerDelay.get(entry.getKey());
+            out.printf("\t\t%s:\tIncoming: %.2f us\tBundler: %.2f us\n", entry.getKey(), entry.getValue().getAverage() / 1000, bundlerDelay == null ? 0 : bundlerDelay.getAverage() / 1000);
          }
          out.println("\tTransport:");
          double averageLatency = 0;
@@ -318,14 +358,23 @@ public class AnalyseMessages implements Processor {
             } else if (parts[0].compareTo(parts[1]) < 0) {
                double latency = (forward.transportDiffs.stream().reduce(new LongSummaryStatistics(), this::merge).getAverage()
                   + back.transportDiffs.stream().reduce(new LongSummaryStatistics(), this::merge).getAverage()) / 2000;
+               double wcLatency = (forward.transportWallClock.stream().reduce(new LongSummaryStatistics(), this::merge).getAverage()
+                  + back.transportWallClock.stream().reduce(new LongSummaryStatistics(), this::merge).getAverage()) / 2;
                averageLatency += latency;
                latencyCount++;
-               out.printf("\t\t%s\t<-> %s:\tlatency %5.2f us", parts[0], parts[1], latency);
+               out.printf("\t\t%s\t<-> %s:\tlatency %.2f us\twall-clock latency: %.2f ms", parts[0], parts[1], latency, wcLatency);
                int minDiffs = Math.min(forward.transportDiffs.size(), back.transportDiffs.size());
-               for (int i = 0; i < minDiffs; i += 8) {
-                  out.print("\n\t\t\t\t");
-                  for (int j = 0; j < 8 && i + j < minDiffs; ++j) {
-                     out.printf("%5.2f us\t", (forward.transportDiffs.get(i + j).getAverage() + back.transportDiffs.get(i + j).getAverage()) / 2000);
+               for (int i = 0; i < minDiffs; i += 4) {
+                  out.println();
+                  for (int j = 0; j < 4 && i + j < minDiffs; ++j) {
+                     double nanoTimeLatency = (forward.transportDiffs.get(i + j).getAverage() + back.transportDiffs.get(i + j).getAverage()) / 2000;
+                     long forwardCount = forward.transportDiffs.get(i + j).getCount();
+                     long backCount = back.transportDiffs.get(i + j).getCount();
+                     double wallTimeLatency = forward.transportWallClock.get(i + j).getAverage() + back.transportWallClock.get(i + j).getAverage();
+                     if (forwardCount > 0 && backCount > 0) wallTimeLatency /= 2;
+                     out.printf("%s %8.2f us|%8.2f ms(%5d,%5d)\t", new SimpleDateFormat("HH:mm:ss").format(new Date(startUnixTime + (i + j) * 1000)),
+                        forwardCount > 0 && backCount > 0 ? nanoTimeLatency : 0,
+                         wallTimeLatency, forwardCount, backCount);
                   }
                }
                out.printf("\n\t\t%s\t -> %s:\t", parts[0], parts[1]);

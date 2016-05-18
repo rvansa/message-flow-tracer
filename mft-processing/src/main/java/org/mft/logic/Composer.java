@@ -25,6 +25,7 @@ package org.mft.logic;
 import java.io.*;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
@@ -35,6 +36,7 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLongArray;
+import java.util.concurrent.locks.LockSupport;
 import java.util.function.Function;
 import java.util.function.LongConsumer;
 import java.util.function.Predicate;
@@ -42,8 +44,10 @@ import java.util.stream.Collectors;
 
 import org.mft.objects.Event;
 import org.mft.objects.Header;
+import org.mft.objects.Message;
 import org.mft.objects.MessageId;
 import org.mft.objects.Span;
+import org.mft.objects.ThreadChange;
 import org.mft.objects.Trace;
 import org.mft.persistence.FlightRecording;
 import org.mft.persistence.Persister;
@@ -75,6 +79,7 @@ public class Composer extends Logic {
    private long maxMessages = Long.MAX_VALUE;
    private long maxTraces = Long.MAX_VALUE;
    private Map<String, FlightRecording> flrBySource;
+   private long injectedEvents = 0;
 
    @Override
    public void run() {
@@ -89,13 +94,13 @@ public class Composer extends Logic {
       flrBySource = flightRecordings.stream().collect(Collectors.toMap(flr -> getSource(flr.getInput().name()), Function.identity()));
 
       System.err.println("Starting first pass");
-      Thread[] threads = new Thread[logs.size()];
+      FirstPassThread[] firstThreads = new FirstPassThread[logs.size()];
       for (int i = 0; i < logs.size(); ++i) {
-         Thread t = new FirstPassThread(logs.get(i));
-         threads[i] = t;
+         FirstPassThread t = new FirstPassThread(logs.get(i));
+         firstThreads[i] = t;
          t.start();
       }
-      if (!joinAll(threads)) return;
+      if (!joinAll(firstThreads)) return;
       totalMessages = messageReferences.size();
       System.err.printf("Found %d messages\n", totalMessages);
       if (reportMemoryUsage) {
@@ -103,14 +108,15 @@ public class Composer extends Logic {
       }
       System.err.println("Starting second pass");
       highestUnixTimestamps = new AtomicLongArray(logs.size());
+      SecondPassThread[] secondThreads = new SecondPassThread[logs.size()];
       for (int i = 0; i < logs.size(); ++i) {
-         Thread t = new SecondPassThread(logs.get(i), i);
-         threads[i] = t;
+         SecondPassThread t = new SecondPassThread(logs.get(i), i, firstThreads[i].getThreadNames());
+         secondThreads[i] = t;
          t.start();
       }
       ProcessorThread processorThread = new ProcessorThread(processors);
       processorThread.start();
-      joinAll(threads);
+      joinAll(secondThreads);
       while (!finishedTraces.isEmpty()) {
          Thread.yield();
       }
@@ -168,6 +174,7 @@ public class Composer extends Logic {
 
    private class FirstPassThread extends Thread {
       private Persister persister;
+      private Map<Long, List<ThreadChange>> threadNames = new HashMap<>();
 
       private FirstPassThread(Persister persister) {
          super("First pass: " + persister.getInput().name());
@@ -179,7 +186,7 @@ public class Composer extends Logic {
          try {
             persister.openForRead();
             try {
-               persister.read(span -> {
+               persister.setSpanConsumer(span -> {
                   for (MessageId msg : span.getMessages()) {
                      AtomicInteger prev = messageReferences.putIfAbsent(msg, new AtomicInteger(1));
                      if (prev != null) {
@@ -192,6 +199,10 @@ public class Composer extends Logic {
                      }
                   }
                }, false);
+               persister.setThreadChangeConsumer(threadChange ->
+                  threadNames.computeIfAbsent(threadChange.getId(), id -> new ArrayList<>()).add(threadChange)
+               );
+               persister.read();
                System.err.println("Finished reading (first pass) " + persister.getInput().name());
             } finally {
                persister.close();
@@ -202,17 +213,24 @@ public class Composer extends Logic {
             System.exit(1);
          }
       }
+
+      public Map<Long, List<ThreadChange>> getThreadNames() {
+         threadNames.forEach((id, list) -> Collections.sort(list, (tc1, tc2) -> Long.compare(tc1.getNanoTime(), tc2.getNanoTime())));
+         return threadNames;
+      }
    }
 
-   private class SecondPassThread extends Thread {
-      private Persister persister;
-      private int selfIndex;
+   public class SecondPassThread extends Thread {
+      private final Map<Long, List<ThreadChange>> threadNames;
+      private final Persister persister;
+      private final int selfIndex;
       private long highestUnixTimestamp = 0;
 
-      public SecondPassThread(Persister persister, int selfIndex) {
+      public SecondPassThread(Persister persister, int selfIndex, Map<Long, List<ThreadChange>> threadNames) {
          super("Second pass: " + persister.getInput().name());
          this.persister = persister;
          this.selfIndex = selfIndex;
+         this.threadNames = threadNames;
       }
 
       @Override
@@ -227,7 +245,7 @@ public class Composer extends Logic {
                processor.processHeader(header);
             }
             try {
-               persister.read(span -> {
+               persister.setSpanConsumer(span -> {
                   int spanId = spanCounter.getAndIncrement();
                   if (!span.isNonCausal()) {
                      Trace trace = null;
@@ -237,7 +255,7 @@ public class Composer extends Logic {
                         } else {
                            Trace traceForThisMessage = traces.get(message);
                            if (trace == traceForThisMessage) {
-                              //System.err.println("Message should not be twice in one trace on one machine! (" + message + ", " + source + ":" + lineNumber + ")");
+                              // We have sent message to ourselves
                            } else if (traceForThisMessage == null) {
                               trace.addMessage(message);
                               traceForThisMessage = traces.putIfAbsent(message, trace);
@@ -253,11 +271,13 @@ public class Composer extends Logic {
                      if (trace == null) {
                         // no message associated, but tracked?
                         trace = new Trace();
-                        trace.lock.lock();
+//                        System.err.printf("%d K Locking %08x%n", Thread.currentThread().getId(), System.identityHashCode(trace.lock));
+                        trace.lock();
+//                        System.err.printf("%d K Locked %08x%n", Thread.currentThread().getId(), System.identityHashCode(trace.lock));
                      }
                      for (Span.LocalEvent event : span.getEvents()) {
                         Event e = new Event(header.getNanoTime(), header.getUnixTime(), event.timestamp, source,
-                           spanId, event.threadName, event.type, event.payload);
+                           spanId, getThreadName(event.threadId, event.timestamp), event.type, event.payload);
                         trace.addEvent(e);
                         checkAdvance(e.timestamp.getTime());
                      }
@@ -265,13 +285,13 @@ public class Composer extends Logic {
                   } else {
                      for (Span.LocalEvent event : span.getEvents()) {
                         if (event.type == Event.Type.OUTCOMING_DATA_STARTED) {
-                           MessageId messageId = (MessageId) event.payload;
-                           Trace traceForThisMessage = retrieveTraceFor(messageId);
+                           Message message = (Message) event.payload;
+                           Trace traceForThisMessage = retrieveTraceFor(message.id());
                            Event e = new Event(header.getNanoTime(), header.getUnixTime(), event.timestamp,
-                              source, spanId, event.threadName, Event.Type.RETRANSMISSION, event.payload);
+                              source, spanId, getThreadName(event.threadId, event.timestamp), Event.Type.RETRANSMISSION, event.payload);
                            traceForThisMessage.addEvent(e);
 
-                           decrementMessageRefCount(messageId);
+                           decrementMessageRefCount(message.id());
                            tryRetire(traceForThisMessage);
                            checkAdvance(e.timestamp.getTime());
                         } else if (event.type == Event.Type.TRACE_TAG) {
@@ -280,6 +300,8 @@ public class Composer extends Logic {
                      }
                   }
                }, true);
+               persister.setThreadChangeConsumer(tc -> {});
+               persister.read();
             } finally {
                persister.close();
             }
@@ -291,6 +313,20 @@ public class Composer extends Logic {
             e.printStackTrace();
             System.exit(1);
          }
+      }
+
+      private String getThreadName(long threadId, long timestamp) {
+         List<ThreadChange> threadChanges = threadNames.get(threadId);
+         if (threadChanges == null) {
+            return "(unknown)-" + threadId;
+         }
+         ThreadChange last = null;
+         for (ThreadChange tc : threadChanges) {
+            if (timestamp >= tc.getNanoTime()) {
+               return last != null ? last.getThreadName() : tc.getThreadName();
+            }
+         }
+         return last != null ? last.getThreadName() : "(unknown)-" + threadId;
       }
 
       private void checkAdvance(long eventUnixTimestamp) {
@@ -317,46 +353,62 @@ public class Composer extends Logic {
       private Trace mergeTraces(Trace trace, MessageId message, Trace traceForThisMessage) {
          // hopefully even if we merge the traces twice the result is still correct
          for (;;) {
-            if (traceForThisMessage.lock.tryLock()) {
+//            System.err.printf("%d TryLocking %08x for %s%n", Thread.currentThread().getId(), System.identityHashCode(traceForThisMessage.lock), message);
+            if (traceForThisMessage.tryLock()) {
                // check if we have really the right trace
                Trace possiblyOtherTrace = traces.get(message);
                if (possiblyOtherTrace != traceForThisMessage) {
-                  traceForThisMessage.lock.unlock();
-                  if (possiblyOtherTrace == trace || possiblyOtherTrace == null) {
-                     // nobody can manipulate with current trace and the trace cannot be retired either
-                     trace.lock.unlock();
+                  traceForThisMessage.unlock();
+                  if (possiblyOtherTrace == trace) {
+                     // Somebody had done the job for us when we have released trace.lock for a moment
+                     return trace;
+                  } else if (possiblyOtherTrace == null) {
+                     trace.unlock();
                      throw new IllegalStateException();
                   }
                   traceForThisMessage = possiblyOtherTrace;
                } else {
-                  for (MessageId msg : traceForThisMessage.messages) {
-                     traces.put(msg, trace);
-                     trace.addMessage(msg);
-                  }
-                  for (Event e : traceForThisMessage.events) {
-                     trace.addEvent(e);
-                  }
+                  try {
+                     if (traceForThisMessage.mergedInto != null) {
+                        trace.unlock();
+                        throw new IllegalStateException("in thread " + Thread.currentThread().getId());
+                     }
 
-                  if (traceForThisMessage.mergedInto != null) {
-                     throw new IllegalStateException();
+                     for (MessageId msg : traceForThisMessage.messages) {
+                        if (traces.put(msg, trace) != traceForThisMessage) {
+                           trace.unlock();
+                           throw new IllegalStateException();
+                        }
+                        trace.addMessage(msg);
+                     }
+                     for (Event e : traceForThisMessage.events) {
+                        trace.addEvent(e);
+                     }
+
+                     traceForThisMessage.mergedInto = trace;
+                     trace.mergeCounter += traceForThisMessage.mergeCounter;
+                     break;
+                  } finally {
+                     traceForThisMessage.unlock();
                   }
-                  traceForThisMessage.mergedInto = trace;
-                  trace.mergeCounter += traceForThisMessage.mergeCounter;
-                  traceForThisMessage.lock.unlock();
-                  break;
                }
             } else {
                trace.mergeCounter++;
-               trace.lock.unlock();
-               Thread.yield();
-               trace.lock.lock();
+               trace.unlock();
+//               Thread.yield();
+               LockSupport.parkNanos(1);
+               trace.lock();
                trace.mergeCounter--;
                while (trace.mergedInto != null) {
                   Trace old = trace;
                   trace = trace.mergedInto;
-                  old.lock.unlock();
-                  trace.lock.lock();
+                  old.unlock();
+                  trace.lock();
+                  // as the merge counter has been added during merge, we have to decrement it on the merged trace as well
                   trace.mergeCounter--;
+               }
+               if (trace == traceForThisMessage) {
+                  return trace;
                }
             }
          }
@@ -368,26 +420,37 @@ public class Composer extends Logic {
          if (trace == null) {
             trace = new Trace();
             trace.addMessage(message);
+            trace.lock();
             Trace prev = traces.putIfAbsent(message, trace);
-            if (prev != null) {
+            if (prev == null) {
+               return trace;
+            } else {
+               trace.unlock();
                trace = prev;
             }
          }
          for (;;) {
-            trace.lock.lock();
+//            System.err.printf("%d H Locking %08x for %s%n", Thread.currentThread().getId(), System.identityHashCode(trace.lock), message);
+            trace.lock();
+//            System.err.printf("%d H Locked %08x for %s%n", Thread.currentThread().getId(), System.identityHashCode(trace.lock), message);
             Trace traceFromMap = traces.get(message);
             if (traceFromMap == null) {
                // removal from the map happens only when the trace is retired, therefore, no more
                // references for the message are alive
-               trace.lock.unlock();
-               throw new IllegalStateException();
+               trace.unlock();
+//               System.err.printf("%d I Unlocked %08x%n", Thread.currentThread().getId(), System.identityHashCode(trace.lock));
+               throw new IllegalStateException("in thread " + Thread.currentThread().getId());
             }
             if (traceFromMap != trace) {
-               trace.lock.unlock();
+               trace.unlock();
+//               System.err.printf("%d J Unlocked %08x%n", Thread.currentThread().getId(), System.identityHashCode(trace.lock));
                trace = traceFromMap;
             } else {
                break;
             }
+         }
+         if (trace.mergedInto != null) {
+            throw new IllegalStateException();
          }
          return trace;
       }
@@ -400,6 +463,9 @@ public class Composer extends Logic {
       private void tryRetire(Trace trace) {
          if (trace == null) return;
          try {
+            if (trace.mergedInto != null) {
+               throw new IllegalStateException();
+            }
             if (trace.mergeCounter > 0) return;
             for (MessageId message : trace.messages) {
                if (messageReferences.get(message) != null) {
@@ -414,7 +480,8 @@ public class Composer extends Logic {
          } catch (InterruptedException e) {
             System.err.println("Interrupted when adding to queue!");
          } finally {
-            trace.lock.unlock();
+            trace.unlock();
+//            System.err.printf("%d L Unlocked %08x%n", Thread.currentThread().getId(), System.identityHashCode(trace.lock));
          }
       }
    }
@@ -449,13 +516,20 @@ public class Composer extends Logic {
          return;
       }
       Map<Trace.SourcedThread, MinMax> threadOccurences = new HashMap<>();
+      Map<String, MinMax> sourceOccurences = new HashMap<>();
       for (Event event : trace.events) {
          Trace.SourcedThread sourcedThread = new Trace.SourcedThread(event.source, event.threadName);
-         MinMax minMax = threadOccurences.get(sourcedThread);
-         if (minMax == null) {
+         MinMax threadMinMax = threadOccurences.get(sourcedThread);
+         if (threadMinMax == null) {
             threadOccurences.put(sourcedThread, new MinMax(event.timestamp.getTime()));
          } else {
-            minMax.accept(event.timestamp.getTime());
+            threadMinMax.accept(event.timestamp.getTime());
+         }
+         MinMax sourceMinMax = sourceOccurences.get(event.source);
+         if (sourceMinMax == null) {
+            sourceOccurences.put(event.source, new MinMax(event.timestamp.getTime()));
+         } else {
+            sourceMinMax.accept(event.timestamp.getTime());
          }
       }
       for (Map.Entry<Trace.SourcedThread, MinMax> entry :threadOccurences.entrySet()) {
@@ -465,6 +539,15 @@ public class Composer extends Logic {
          if (events == null) continue;
          for (Event event : events.subMap(entry.getValue().min, entry.getValue().max).values()) {
             trace.addEvent(event);
+            injectedEvents++;
+         }
+      }
+      for (Map.Entry<String, MinMax> entry: sourceOccurences.entrySet()) {
+         FlightRecording flr = flrBySource.get(entry.getKey());
+         if (flr == null) continue;
+         for (Event event : flr.getGlobalEvents().subMap(entry.getValue().min, entry.getValue().max).values()) {
+            trace.addEvent(event);
+            injectedEvents++;
          }
       }
    }
@@ -554,7 +637,7 @@ public class Composer extends Logic {
          for (Processor processor : processors) {
             processor.finish();
          }
-         System.err.printf("Processing finished, %d traces (%d filtered out)\n", traceCounter, filteredTraceCounter);
+         System.err.printf("Processing finished, %d traces (%d filtered out), %d injected events\n", traceCounter, filteredTraceCounter, injectedEvents);
       }
 
       public void finish() {

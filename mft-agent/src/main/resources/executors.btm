@@ -106,6 +106,7 @@ ENDRULE
 RULE FJT_exec
 CLASS ^java.util.concurrent.ForkJoinTask
 METHOD exec
+NOCOMPILE
 AT ENTRY
 IF TRUE
 DO
@@ -129,3 +130,21 @@ ENDRULE
 #DO
 #  threadProcessingCompleted();
 #ENDRULE
+
+RULE ThreadNameSet
+CLASS java.lang.Thread
+METHOD init(ThreadGroup, Runnable, String, long, AccessControlContext)
+AT EXIT
+IF TRUE
+DO
+    recordThreadName($0);
+ENDRULE
+
+RULE ThreadNameChange
+CLASS java.lang.Thread
+METHOD setName(String)
+AT EXIT
+IF TRUE
+DO
+    recordThreadName(java.lang.Thread.currentThread());
+ENDRULE

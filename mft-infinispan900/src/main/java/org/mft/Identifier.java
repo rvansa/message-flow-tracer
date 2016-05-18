@@ -17,15 +17,9 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 public class Identifier extends Protocol {
    static final short PROTOCOL_ID = 0x1DE1;
-   private static short nodeId;
    private static AtomicInteger counter = new AtomicInteger();
 
    static {
-      Integer nodeId = Integer.getInteger("org.mft.nodeId");
-      if (nodeId == null) {
-         throw new IllegalStateException("This node does not have identifier set.");
-      }
-      Identifier.nodeId = nodeId.shortValue();
       ClassConfigurator.add(PROTOCOL_ID, Header.class);
    }
 
@@ -41,7 +35,7 @@ public class Identifier extends Protocol {
    public Object down(Event evt) {
       if (evt.getType() == Event.MSG) {
          Message msg = (Message) evt.getArg();
-         msg.putHeader(id, new Header(nodeId, counter.getAndIncrement()));
+         msg.putHeader(id, new Header(MessageId.NODE_ID, counter.getAndIncrement()));
       }
       return super.down(evt);
    }
@@ -69,7 +63,7 @@ public class Identifier extends Protocol {
 
       @Override
       public void writeTo(DataOutput out) throws Exception {
-         out.writeShort(nodeId);
+         out.writeShort(MessageId.NODE_ID);
          out.writeInt(id);
       }
 

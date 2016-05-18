@@ -22,6 +22,8 @@
 
 package org.mft.objects;
 
+import org.mft.persistence.Persistable;
+import org.mft.persistence.Persister;
 import org.mft.persistence.TextPersister;
 
 import java.io.*;
@@ -38,7 +40,7 @@ import java.util.Set;
 *
 * @author Radim Vansa &lt;rvansa@redhat.com&gt;
 */
-public class Span implements Serializable {
+public class Span implements Serializable, Persistable {
    private final transient Span parent;
    private MessageId incoming;
    private List<MessageId> outcoming;
@@ -106,15 +108,15 @@ public class Span implements Serializable {
      * Decrement counter in parent span, if it doesn't have a parent decrement counter it this span.
      * If counter is zero pass to finished
      */
-   public void decrementRefCount(Queue<Span> finishedSpans) {
+   public void decrementRefCount(Queue<Persistable> persistenceQueue) {
       if (parent != null) {
-         parent.decrementRefCount(finishedSpans);
+         parent.decrementRefCount(persistenceQueue);
          return;
       }
       synchronized (this) {
          counter--;
          if (counter == 0) {
-            passToFinished(finishedSpans);
+            persist(persistenceQueue);
          } else if (counter < 0) {
             ByteArrayOutputStream stream = new ByteArrayOutputStream();
             print(new PrintStream(stream), "");
@@ -137,9 +139,9 @@ public class Span implements Serializable {
 
     /**
      * add events, incoming and outcomming messages from parent, pass children to finished spans
-     * @param finishedSpans
+     * @param persistenceQueue
      */
-   private void passToFinished(Queue<Span> finishedSpans) {
+   private void persist(Queue<Persistable> persistenceQueue) {
 //      synchronized (debugSpans) {
 //         debugSpans.remove(this);
 //      }
@@ -161,17 +163,17 @@ public class Span implements Serializable {
       }
       if (children.isEmpty()) {
 //         System.err.printf("%08x finished\n", this.hashCode());
-         finishedSpans.add(this);
+         persistenceQueue.add(this);
       } else {
          boolean causalChildren = false;
          for (Span child : children) {
             if (!child.isNonCausal()) {
                causalChildren = true;
             }
-            child.passToFinished(finishedSpans);
+            child.persist(persistenceQueue);
          }
          if (!causalChildren) {
-            finishedSpans.add(this);
+            persistenceQueue.add(this);
 //            System.err.printf("%08x finished\n", this.hashCode());
          }
       }
@@ -195,7 +197,8 @@ public class Span implements Serializable {
    public void setIncoming(MessageId incoming) {
       if (this.incoming != null) {
          //throw new IllegalArgumentException("Cannot have two incoming messages!");
-          System.err.println("Cannot have two incoming messages. The current incoming message is " + this.incoming);
+          System.err.println("Cannot have two incoming messages. The current incoming message is " + this.incoming + ", span is " + this);
+          new Throwable().fillInStackTrace().printStackTrace();
           return;
       }
       this.incoming = incoming;
@@ -264,7 +267,7 @@ public class Span implements Serializable {
          sb.append(System.lineSeparator());
          for (LocalEvent event : events){
             sb.append(" timestamp: " + event.timestamp);
-            sb.append(" threadName: " + event.threadName);
+            sb.append(" threadId: " + event.threadId);
             sb.append(" type: " + event.type);
             sb.append(" payload: " + event.payload);
             sb.append(System.lineSeparator());
@@ -288,24 +291,29 @@ public class Span implements Serializable {
       return Arrays.asList(array);
    }
 
+   @Override
+   public void accept(Persister persister) throws IOException {
+      persister.write(this, false);
+   }
+
    public static class LocalEvent implements Comparable<LocalEvent>, Serializable {
       public long timestamp;
-      public String threadName;
+      public long threadId;
       public Event.Type type;
       public Object payload;
 
       public LocalEvent(){};
 
-      public LocalEvent(long timestamp, String threadName, Event.Type type, Object payload) {
+      public LocalEvent(long timestamp, long threadId, Event.Type type, Object payload) {
          this.timestamp = timestamp;
-         this.threadName = threadName;
+         this.threadId = threadId;
          this.type = type;
          this.payload = payload;
       }
 
       private LocalEvent(Event.Type type, Object payload) {
          this.timestamp = System.nanoTime();
-         this.threadName = Thread.currentThread().getName();
+         this.threadId = Thread.currentThread().getId();
          this.type = type;
          this.payload = payload;
       }

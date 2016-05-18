@@ -60,7 +60,9 @@ public class Event {
       MONITOR_ENTER("Monitor enter"),
       MONITOR_EXIT("Monitor exit"),
       MONITOR_WAIT_START("Monitor wait start"),
-      MONITOR_WAIT_END("Monitor wait end")
+      MONITOR_WAIT_END("Monitor wait end"),
+      GC_START("GC start"),
+      GC_END("GC end"),
       ;
 
       private String name;
